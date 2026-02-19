@@ -1,36 +1,68 @@
 (function () {
     'use strict';
 
-    var rules = [
-        { pattern: /смотреть\s*!?/i,  replaceWith: 'Дополнительный' },
-        { pattern: /торрент(ы|ов)?/i, replaceWith: 'Торренты'       },
-        { pattern: /^онлайн$/i,       replaceWith: 'Основной'        },
+    const rules = [
+        { pattern: /смотреть\s*!?/i,          replaceWith: 'Дополнительный' },
+        { pattern: /торрент(ы|ов)?/i,         replaceWith: 'Торренты' },
+        { pattern: /^онлайн$/i,               replaceWith: 'Основной' },
     ];
 
-    function fixButtons() {
-        var candidates = document.querySelectorAll('span, div, button');
-        candidates.forEach(function (el) {
-            if (el.children.length > 4) return;
-            var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
-            var node;
-            while ((node = walker.nextNode())) {
-                var text = node.nodeValue.trim();
-                if (!text) continue;
-                for (var i = 0; i < rules.length; i++) {
-                    if (rules[i].pattern.test(text)) {
-                        node.nodeValue = node.nodeValue.replace(text, rules[i].replaceWith);
-                        break;
-                    }
-                }
+    function renameInNode(node) {
+        if (node.nodeType !== Node.TEXT_NODE) return;
+        let text = node.nodeValue.trim();
+        if (!text) return;
+
+        for (let rule of rules) {
+            if (rule.pattern.test(text)) {
+                node.nodeValue = node.nodeValue.replace(text, rule.replaceWith);
+                return; // одно совпадение → выходим
             }
-        });
+        }
     }
+
+    function processElement(el) {
+        if (!el || el.children?.length > 5) return; // защита от больших блоков
+
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            renameInNode(node);
+        }
+    }
+
+    // Наблюдатель за всем телом (или можно за #app / .lampa__content)
+    const observer = new MutationObserver((mutations) => {
+        for (let mutation of mutations) {
+            if (mutation.type === 'childList') {
+                mutation.addedNodes.forEach(node => {
+                    if (node.nodeType === Node.ELEMENT_NODE) {
+                        processElement(node);
+                        // рекурсивно проходим всех потомков
+                        node.querySelectorAll('span, div, button').forEach(processElement);
+                    }
+                });
+            }
+        }
+    });
 
     function init() {
-        Lampa.Storage.get('button_renamer_enabled', true);
-        setInterval(fixButtons, 1500);
+        // сразу применяем ко всему документу
+        document.querySelectorAll('span, div, button').forEach(processElement);
+
+        // запускаем наблюдатель
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        console.log("[ButtonRenamer] запущен через MutationObserver");
     }
 
-    init();
+    // ждём, пока Lampa хоть немного загрузится
+    if (document.body) {
+        init();
+    } else {
+        document.addEventListener('DOMContentLoaded', init);
+    }
 
 })();
