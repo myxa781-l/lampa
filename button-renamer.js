@@ -2,9 +2,9 @@
     'use strict';
 
     const rules = [
-        { pattern: /смотреть\s*!?/i,          replaceWith: 'Дополнительный' },
+        { pattern: /смотреть\s*!?/i,          replaceWith: 'Основной' },
         { pattern: /торрент(ы|ов)?/i,         replaceWith: 'Торренты' },
-        { pattern: /^онлайн$/i,               replaceWith: 'Основной' },
+        { pattern: /^онлайн$/i,               replaceWith: 'Дополнительный' },
     ];
 
     function renameInNode(node) {
