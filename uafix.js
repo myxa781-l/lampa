@@ -1,628 +1,511 @@
 (function () {
     'use strict';
 
-    var UAFIX_DOMAIN = 'https://uafix.net';
-    var ZET_DOMAIN   = 'https://zetvideo.net';
+    if (window.uafix_plugin_loaded) return;
+    window.uafix_plugin_loaded = true;
 
-    // ========== Утилиты ==========
+    var UAFIX = 'https://uafix.net';
+    var ZET   = 'https://zetvideo.net';
+    var PLUGIN_NAME = 'uafix_online';
 
-    function proxy(url) {
-        // Lampa может использовать прокси для CORS; если не нужен — возвращаем как есть
-        if (typeof Lampa !== 'undefined' && Lampa.Storage && Lampa.Storage.get('proxy_url')) {
-            return Lampa.Storage.get('proxy_url') + url;
-        }
-        return url;
+    function parseHTML(text) {
+        return (new DOMParser()).parseFromString(text, 'text/html');
     }
 
-    function get(url) {
-        return new Promise(function (resolve, reject) {
-            var network = new Lampa.Reguest();
-            network.silent(proxy(url), function (html) {
-                resolve(html);
-            }, function (err) {
-                reject(err);
-            });
+    function getRequest(url, success, error) {
+        var net = new Lampa.Reguest();
+        net.silent(url, function (data) {
+            if (typeof data === 'string') {
+                success(data);
+            } else {
+                try { success(JSON.stringify(data)); }
+                catch(e) { success(''); }
+            }
+        }, function (e) {
+            if (error) error(e);
+        }, false, {
+            dataType: 'text'
         });
+        return net;
     }
 
-    // Парсер HTML → DOM
-    function parseHTML(html) {
-        var parser = new DOMParser();
-        return parser.parseFromString(html, 'text/html');
+    function escapeHtml(t) {
+        return t ? String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
     }
 
-    // ========== Компонент источника ==========
+    // ============ SEARCH COMPONENT ============
 
-    function UAFlix(component, object) {
+    function uafixComponent(object) {
         var network = new Lampa.Reguest();
         var scroll  = new Lampa.Scroll({ mask: true, over: true });
-        var items   = [];
-        var last;
+        var files   = new Lampa.Explorer(object);
+        var last    = false;
+        var initialized = false;
 
-        // ---------- ПОИСК ----------
-        this.search = function (query, page) {
-            // uafix.net поиск: /index.php?do=search&subaction=search&story=ЗАПРОС
-            var url = UAFIX_DOMAIN + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(query.movie || query.search || query);
+        this.create = function () {
+            return this.render();
+        };
 
-            get(url).then(function (html) {
-                var doc = parseHTML(html);
-                var cards = doc.querySelectorAll('.short-item, .shortstory, .movie-item, .item');
+        this.start = function () {
+            var _this = this;
+
+            if (Lampa.Activity.active().activity !== this.activity) return;
+
+            Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
+
+            if (!initialized) {
+                initialized = true;
+                files.appendFiles(scroll.render());
+                scroll.body().addClass('torrent-list');
+                _this.doSearch();
+            }
+
+            Lampa.Controller.add('content', {
+                toggle: function () {
+                    Lampa.Controller.collectionSet(scroll.render(), files.render());
+                    Lampa.Controller.collectionFocus(last || false, scroll.render());
+                },
+                up: function () {
+                    if (Navigator.canmove('up')) Navigator.move('up');
+                    else Lampa.Controller.toggle('head');
+                },
+                down: function () { Navigator.move('down'); },
+                right: function () { Navigator.move('right'); },
+                left: function () {
+                    if (Navigator.canmove('left')) Navigator.move('left');
+                    else Lampa.Controller.toggle('menu');
+                },
+                back: this.back
+            });
+            Lampa.Controller.toggle('content');
+        };
+
+        this.doSearch = function () {
+            var _this = this;
+            var query = object.search || object.movie.title || object.movie.name || '';
+
+            if (!query) { _this.showEmpty(); return; }
+
+            _this.activity.loader(true);
+
+            var url = UAFIX + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(query);
+
+            getRequest(url, function (text) {
+                var doc = parseHTML(text);
                 var results = [];
-
-                cards.forEach(function (card) {
-                    var link  = card.querySelector('a');
-                    var img   = card.querySelector('img');
-                    var title = card.querySelector('.short-title, .movie-title, h3, h2');
-
-                    if (link) {
-                        results.push({
-                            url:   link.getAttribute('href') || '',
-                            title: title ? title.textContent.trim() : (link.textContent.trim() || ''),
-                            image: img ? img.getAttribute('src') || '' : '',
-                        });
-                    }
-                });
-
-                if (results.length === 0) {
-                    // Альтернативный парсинг: ищем все ссылки с /serials/ или /films/
-                    doc.querySelectorAll('a[href*="/serials/"], a[href*="/films/"]').forEach(function (a) {
-                        var href = a.getAttribute('href');
-                        if (href && href !== '#') {
-                            results.push({
-                                url:   href.startsWith('http') ? href : UAFIX_DOMAIN + href,
-                                title: a.textContent.trim(),
-                                image: '',
-                            });
-                        }
-                    });
-                }
-
-                // Убираем дубли
                 var seen = {};
-                results = results.filter(function (r) {
-                    if (!r.url || seen[r.url]) return false;
-                    seen[r.url] = true;
-                    return true;
-                });
 
-                component.render(results.map(function (r) {
-                    return {
-                        title: r.title,
-                        url:   r.url,
-                        image: r.image,
-                    };
-                }), query);
-
-            }).catch(function () {
-                component.empty();
-            });
-        };
-
-        // ---------- КАРТОЧКА (сезоны / серии / фильм) ----------
-        this.full = function (data, params) {
-            var url = data.url;
-
-            if (!url) {
-                component.empty();
-                return;
-            }
-
-            if (!url.startsWith('http')) url = UAFIX_DOMAIN + url;
-
-            get(url).then(function (html) {
-                var doc  = parseHTML(html);
-                var result = { seasons: [], movie: null };
-
-                // --- Проверяем: это фильм (есть iframe/vod прямо на странице)? ---
-                var vodMatch = html.match(/https?:\/\/zetvideo\.net\/vod\/(\d+)/);
-                if (vodMatch) {
-                    // Это страница с плеером (фильм или конкретная серия)
-                    result.movie = {
-                        vodId:   vodMatch[1],
-                        vodUrl:  vodMatch[0],
-                        title:   data.title || doc.querySelector('h1') && doc.querySelector('h1').textContent.trim() || '',
-                    };
-                }
-
-                // --- Ищем сезоны ---
-                var seasonLinks = doc.querySelectorAll('a[href*="sezon-"], a[href*="season-"]');
-                var seenSeasons = {};
-
-                seasonLinks.forEach(function (a) {
+                doc.querySelectorAll('a[href]').forEach(function (a) {
                     var href = a.getAttribute('href') || '';
-                    var text = a.textContent.trim();
-                    // Извлекаем номер сезона
-                    var sMatch = href.match(/sezon-?(\d+)/i) || href.match(/season-?(\d+)/i);
-                    var sNum   = sMatch ? parseInt(sMatch[1]) : 0;
-                    var key    = sNum || href;
+                    if (!href.includes('/serials/') && !href.includes('/films/')) return;
+                    if (href === UAFIX + '/serials/' || href === UAFIX + '/films/') return;
+                    if (href.endsWith('/serials/') || href.endsWith('/films/')) return;
+                    if (seen[href]) return;
 
-                    if (!seenSeasons[key]) {
-                        seenSeasons[key] = true;
-                        result.seasons.push({
-                            number: sNum,
-                            title:  text || ('Сезон ' + sNum),
-                            url:    href.startsWith('http') ? href : UAFIX_DOMAIN + href,
-                        });
-                    }
+                    var title = a.textContent.trim();
+                    if (!title || title.length < 3) return;
+
+                    seen[href] = true;
+                    results.push({
+                        title: title,
+                        url: href.startsWith('http') ? href : UAFIX + href
+                    });
                 });
 
-                // --- Ищем серии на текущей странице ---
-                var episodes = parseEpisodes(doc, html);
+                _this.activity.loader(false);
+                _this.activity.toggle();
 
-                if (result.seasons.length > 0 && episodes.length === 0) {
-                    // Есть сезоны — показываем выбор сезона
-                    component.render(result.seasons.map(function (s) {
-                        return {
-                            title: s.title,
-                            url:   s.url,
-                            season: true,
-                        };
-                    }), data);
-
-                } else if (episodes.length > 0) {
-                    // Есть серии — показываем список серий
-                    component.render(episodes.map(function (ep) {
-                        return {
-                            title:  ep.title,
-                            url:    ep.url,
-                            vodId:  ep.vodId || null,
-                        };
-                    }), data);
-
-                } else if (result.movie) {
-                    // Фильм — сразу stream
-                    UAFlix.prototype.stream.call(this, result.movie, params);
-                } else {
-                    component.empty();
-                }
-
-            }).catch(function () {
-                component.empty();
-            });
-        };
-
-        // ---------- ПАРСИНГ СЕРИЙ ----------
-        function parseEpisodes(doc, html) {
-            var episodes = [];
-            var seen = {};
-
-            // Вариант 1: блок #sers-wr
-            var sersWr = doc.querySelector('#sers-wr');
-            if (sersWr) {
-                sersWr.querySelectorAll('a').forEach(function (a) {
-                    addEpisode(a, episodes, seen);
-                });
-            }
-
-            // Вариант 2: ссылки с episode в URL
-            if (episodes.length === 0) {
-                doc.querySelectorAll('a[href*="episode"]').forEach(function (a) {
-                    addEpisode(a, episodes, seen);
-                });
-            }
-
-            // Вариант 3: ссылки season-XX-episode-XX
-            if (episodes.length === 0) {
-                doc.querySelectorAll('a[href*="season-"]').forEach(function (a) {
-                    var href = a.getAttribute('href') || '';
-                    if (href.match(/season-\d+-episode-\d+/)) {
-                        addEpisode(a, episodes, seen);
-                    }
-                });
-            }
-
-            return episodes;
-        }
-
-        function addEpisode(a, episodes, seen) {
-            var href = a.getAttribute('href') || '';
-            if (!href || href === '#' || seen[href]) return;
-            seen[href] = true;
-
-            var text = a.textContent.trim();
-            var epMatch = href.match(/episode-?(\d+)/i);
-            var epNum   = epMatch ? parseInt(epMatch[1]) : episodes.length + 1;
-
-            episodes.push({
-                title: text || ('Серія ' + epNum),
-                url:   href.startsWith('http') ? href : UAFIX_DOMAIN + href,
-                number: epNum,
-            });
-        }
-
-        // ---------- ПОЛУЧЕНИЕ ПОТОКА ----------
-        this.stream = function (data, params) {
-            var url = data.url;
-
-            // Если vodId уже известен — сразу идём на ZetVideo
-            if (data.vodId) {
-                return fetchStream(data.vodId, data.title || '');
-            }
-
-            if (!url) {
-                component.empty();
-                return;
-            }
-
-            if (!url.startsWith('http')) url = UAFIX_DOMAIN + url;
-
-            get(url).then(function (html) {
-                // Ищем vod ID
-                var vodMatch = html.match(/https?:\/\/zetvideo\.net\/vod\/(\d+)/);
-                if (!vodMatch) {
-                    // Пробуем другие паттерны
-                    vodMatch = html.match(/vod\/(\d+)/);
-                }
-
-                if (!vodMatch) {
-                    // Может m3u8 прямо в HTML?
-                    var m3u8Match = html.match(/https?:\/\/zetvideo\.net\/vid\/[^"'\s]+\.m3u8/);
-                    if (m3u8Match) {
-                        playStream(m3u8Match[0], data.title || '');
-                        return;
-                    }
-                    component.empty();
+                if (!results.length) {
+                    _this.showEmpty();
                     return;
                 }
 
-                fetchStream(vodMatch[1], data.title || '');
+                _this.drawResults(results);
 
-            }).catch(function () {
-                component.empty();
+            }, function () {
+                _this.activity.loader(false);
+                _this.showEmpty();
             });
         };
 
-        function fetchStream(vodId, title) {
-            var vodUrl = ZET_DOMAIN + '/vod/' + vodId;
+        this.drawResults = function (results) {
+            var _this = this;
 
-            get(vodUrl).then(function (html) {
-                // Ищем m3u8 в ответе ZetVideo
-                var m3u8Match = html.match(/https?:\/\/zetvideo\.net\/vid\/[^"'\s]+\.m3u8/);
+            results.forEach(function (r) {
+                var item = $('<div class="selector" style="padding:0.5em 0">' +
+                    '<div style="padding:0.7em 1em;background:rgba(255,255,255,0.06);border-radius:0.3em">' +
+                    '<div style="font-size:1.3em;color:white">' + escapeHtml(r.title) + '</div>' +
+                    '</div></div>');
 
-                if (!m3u8Match) {
-                    // Ищем src у <video>
-                    var videoSrc = html.match(/<video[^>]+src=["']([^"']+)/);
-                    if (videoSrc) {
-                        m3u8Match = [videoSrc[1]];
-                    }
-                }
-
-                if (!m3u8Match) {
-                    // Ищем любой .m3u8
-                    var anyM3u8 = html.match(/["']([^"']*\.m3u8[^"']*)/);
-                    if (anyM3u8) {
-                        m3u8Match = [anyM3u8[1]];
-                    }
-                }
-
-                if (m3u8Match) {
-                    var streamUrl = m3u8Match[0];
-                    if (!streamUrl.startsWith('http')) {
-                        streamUrl = ZET_DOMAIN + streamUrl;
-                    }
-                    playStream(streamUrl, title);
-                } else {
-                    component.empty();
-                }
-
-            }).catch(function () {
-                component.empty();
-            });
-        }
-
-        function playStream(url, title) {
-            // Парсим мастер-плейлист для получения качеств
-            get(url).then(function (m3u8) {
-                var qualities = {};
-                var lines = m3u8.split('\n');
-
-                for (var i = 0; i < lines.length; i++) {
-                    var line = lines[i].trim();
-                    if (line.startsWith('#EXT-X-STREAM-INF')) {
-                        var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-                        var quality  = resMatch ? resMatch[1] + 'p' : 'auto';
-
-                        // Следующая строка — URL
-                        if (i + 1 < lines.length) {
-                            var streamLine = lines[i + 1].trim();
-                            if (streamLine && !streamLine.startsWith('#')) {
-                                if (!streamLine.startsWith('http')) {
-                                    // Относительный URL
-                                    streamLine = url.replace(/\/[^\/]*$/, '/') + streamLine;
-                                }
-                                qualities[quality] = streamLine;
-                            }
-                        }
-                    }
-                }
-
-                // Если нет качеств — это не мастер-плейлист, играем как есть
-                if (Object.keys(qualities).length === 0) {
-                    qualities['auto'] = url;
-                }
-
-                var qualityKeys = Object.keys(qualities);
-
-                // Формируем объект для Lampa
-                var streamData = {
-                    title: title,
-                    quality: qualities,
-                    url: qualities[qualityKeys[0]],
-                };
-
-                // Вызываем плеер Lampa
-                if (typeof Lampa !== 'undefined' && Lampa.Player) {
-                    Lampa.Player.play(streamData);
-                } else {
-                    // Fallback: пробуем component
-                    component.render([streamData]);
-                }
-
-            }).catch(function () {
-                // Если не смогли распарсить — играем мастер напрямую
-                if (typeof Lampa !== 'undefined' && Lampa.Player) {
-                    Lampa.Player.play({
-                        title: title,
-                        url: url,
+                item.on('hover:enter', function () {
+                    Lampa.Activity.push({
+                        url: '',
+                        title: 'UAFlix',
+                        component: 'uafix_page',
+                        page_url: r.url,
+                        page_title: r.title,
+                        movie: object.movie
                     });
-                }
+                }).on('hover:focus', function (e) {
+                    last = e.target;
+                    scroll.update($(e.target), true);
+                });
+
+                scroll.append(item);
             });
-        }
 
-        this.disable = function () {
-            network.clear();
+            Lampa.Controller.enable('content');
         };
 
-        this.destroy = function () {
-            network.clear();
-            scroll.destroy();
+        this.showEmpty = function () {
+            this.activity.loader(false);
+            this.activity.toggle();
+            scroll.append($('<div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div>'));
+            Lampa.Controller.enable('content');
         };
+
+        this.render  = function () { return files.render(); };
+        this.back    = function () { Lampa.Activity.backward(); };
+        this.pause   = function () {};
+        this.stop    = function () { network.clear(); };
+        this.destroy = function () { network.clear(); scroll.destroy(); files.destroy(); };
     }
 
-    // ========== Регистрация плагина ==========
+    // ============ PAGE COMPONENT ============
 
-    // Метод 1: Как источник (Online-плагин)
-    if (typeof Lampa !== 'undefined') {
+    function uafixPageComponent(object) {
+        var network = new Lampa.Reguest();
+        var scroll  = new Lampa.Scroll({ mask: true, over: true });
+        var files   = new Lampa.Explorer(object);
+        var last    = false;
+        var initialized = false;
 
-        // Регистрация как источник для Online-плагина
-        if (Lampa.Params) {
-            // Добавляем в список источников
-            var sources = Lampa.Params.values && Lampa.Params.values['online_sources'];
-            if (sources) {
-                sources['uafix'] = 'UAFlix';
+        this.create = function () {
+            return this.render();
+        };
+
+        this.start = function () {
+            var _this = this;
+
+            if (Lampa.Activity.active().activity !== this.activity) return;
+
+            Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
+
+            if (!initialized) {
+                initialized = true;
+                files.appendFiles(scroll.render());
+                scroll.body().addClass('torrent-list');
+                _this.loadPage();
             }
-        }
 
-        // Регистрация компонента
-        Lampa.Component.add('online_mod_uafix', UAFix);
-
-        // Для совместимости: если используется Lampa.Api.sources
-        if (Lampa.Api && Lampa.Api.sources) {
-            Lampa.Api.sources['uafix'] = UAFix;
-        }
-
-        // Альтернативная регистрация через Manifest
-        if (Lampa.Manifest) {
-            Lampa.Manifest.plugins = Lampa.Manifest.plugins || {};
-            Lampa.Manifest.plugins['uafix'] = {
-                type: 'online',
-                name: 'UAFlix',
-                version: '1.0.0',
-                description: 'Джерело UAFlix (uafix.net) — пошук, сезони, серії, HLS потоки через ZetVideo',
-            };
-        }
-
-        Lampa.Utils.putScriptError && console.log('UAFlix plugin loaded');
-    }
-
-    // ========== Балансер для Online-плагина ==========
-    // Если используется стандартный Lampa Online,
-    // регистрируем как балансер
-
-    function UAFixBalancer() {
-        var SOURCE_NAME = 'uafix';
-        var SOURCE_TITLE = 'UAFlix';
-
-        this.search = function (object, resolve) {
-            var query = object.search || object.title || '';
-
-            var searchUrl = UAFIX_DOMAIN + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(query);
-
-            get(searchUrl).then(function (html) {
-                var doc = parseHTML(html);
-                var results = [];
-
-                // Парсим результаты поиска
-                doc.querySelectorAll('a[href]').forEach(function (a) {
-                    var href = a.getAttribute('href') || '';
-                    if ((href.includes('/serials/') || href.includes('/films/')) && !href.endsWith('/serials/') && !href.endsWith('/films/')) {
-                        var title = a.textContent.trim();
-                        if (title && title.length > 2 && !results.some(function(r){ return r.url === href; })) {
-                            results.push({
-                                url: href.startsWith('http') ? href : UAFIX_DOMAIN + href,
-                                title: title,
-                            });
-                        }
-                    }
-                });
-
-                resolve(results);
-
-            }).catch(function () {
-                resolve([]);
+            Lampa.Controller.add('content', {
+                toggle: function () {
+                    Lampa.Controller.collectionSet(scroll.render(), files.render());
+                    Lampa.Controller.collectionFocus(last || false, scroll.render());
+                },
+                up: function () {
+                    if (Navigator.canmove('up')) Navigator.move('up');
+                    else Lampa.Controller.toggle('head');
+                },
+                down: function () { Navigator.move('down'); },
+                right: function () { Navigator.move('right'); },
+                left: function () {
+                    if (Navigator.canmove('left')) Navigator.move('left');
+                    else Lampa.Controller.toggle('menu');
+                },
+                back: this.back
             });
+            Lampa.Controller.toggle('content');
         };
 
-        this.seasons = function (object, resolve) {
-            var url = object.url;
-            if (!url) return resolve([]);
+        this.loadPage = function () {
+            var _this = this;
+            var url = object.page_url;
 
-            get(url).then(function (html) {
-                var doc = parseHTML(html);
-                var seasons = [];
-                var seen = {};
+            if (!url) { _this.showEmpty(); return; }
 
-                doc.querySelectorAll('a[href*="sezon-"], a[href*="season-"]').forEach(function (a) {
-                    var href = a.getAttribute('href') || '';
-                    var text = a.textContent.trim();
-                    if (!seen[href] && href !== '#') {
-                        seen[href] = true;
-                        var sMatch = href.match(/sezon-?(\d+)/i) || href.match(/season-?(\d+)/i);
-                        seasons.push({
-                            number: sMatch ? parseInt(sMatch[1]) : seasons.length + 1,
-                            title: text || ('Сезон ' + (seasons.length + 1)),
-                            url: href.startsWith('http') ? href : UAFIX_DOMAIN + href,
-                        });
-                    }
-                });
+            _this.activity.loader(true);
 
-                resolve(seasons);
+            getRequest(url, function (text) {
+                var doc = parseHTML(text);
 
-            }).catch(function () {
-                resolve([]);
-            });
-        };
-
-        this.episodes = function (object, resolve) {
-            var url = object.url;
-            if (!url) return resolve([]);
-
-            get(url).then(function (html) {
-                var doc = parseHTML(html);
-                var episodes = [];
-                var seen = {};
-
-                // #sers-wr или ссылки с episode
-                var container = doc.querySelector('#sers-wr');
-                var links = container
-                    ? container.querySelectorAll('a')
-                    : doc.querySelectorAll('a[href*="episode"]');
-
-                links.forEach(function (a) {
-                    var href = a.getAttribute('href') || '';
-                    var text = a.textContent.trim();
-                    if (!seen[href] && href !== '#') {
-                        seen[href] = true;
-                        var epMatch = href.match(/episode-?(\d+)/i);
-                        episodes.push({
-                            number: epMatch ? parseInt(epMatch[1]) : episodes.length + 1,
-                            title: text || ('Серія ' + (episodes.length + 1)),
-                            url: href.startsWith('http') ? href : UAFIX_DOMAIN + href,
-                        });
-                    }
-                });
-
-                resolve(episodes);
-
-            }).catch(function () {
-                resolve([]);
-            });
-        };
-
-        this.stream = function (object, resolve) {
-            var url = object.url;
-            if (!url) return resolve({ url: '' });
-
-            get(url).then(function (html) {
-                // 1) Ищем zetvideo vod ID
-                var vodMatch = html.match(/https?:\/\/zetvideo\.net\/vod\/(\d+)/);
-
-                if (!vodMatch) {
-                    // Может m3u8 прямо в HTML
-                    var directM3u8 = html.match(/https?:\/\/zetvideo\.net\/vid\/[^"'\s]+\.m3u8/);
-                    if (directM3u8) {
-                        return resolveQualities(directM3u8[0], resolve);
-                    }
-                    return resolve({ url: '' });
+                // 1) Серии
+                var episodes = _this.parseEpisodes(doc);
+                if (episodes.length) {
+                    _this.showItems(episodes, 'episode');
+                    return;
                 }
 
-                var vodUrl = ZET_DOMAIN + '/vod/' + vodMatch[1];
+                // 2) Сезоны
+                var seasons = _this.parseSeasons(doc);
+                if (seasons.length) {
+                    _this.showItems(seasons, 'season');
+                    return;
+                }
 
-                // 2) Получаем страницу ZetVideo
-                get(vodUrl).then(function (zetHtml) {
-                    var m3u8 = zetHtml.match(/https?:\/\/zetvideo\.net\/vid\/[^"'\s]+\.m3u8/);
+                // 3) Фильм — vod ID
+                var vodMatch = text.match(/https?:\/\/zetvideo\.net\/vod\/(\d+)/);
+                if (vodMatch) {
+                    _this.activity.loader(false);
+                    _this.resolveAndPlay(vodMatch[1], object.page_title || 'UAFlix');
+                    return;
+                }
 
-                    if (!m3u8) {
-                        var videoSrc = zetHtml.match(/<video[^>]+src=["']([^"']+)/);
-                        if (videoSrc) m3u8 = [videoSrc[1]];
-                    }
+                // 4) Прямой m3u8
+                var direct = text.match(/https?:\/\/zetvideo\.net\/vid\/[^"'\s]+\.m3u8/);
+                if (direct) {
+                    _this.activity.loader(false);
+                    playWithQualities(direct[0], object.page_title || 'UAFlix');
+                    return;
+                }
 
-                    if (!m3u8) {
-                        var anyM3u8 = zetHtml.match(/["']([^"']*\.m3u8[^"']*)/);
-                        if (anyM3u8) m3u8 = [anyM3u8[1]];
-                    }
+                _this.showEmpty();
 
-                    if (m3u8) {
-                        var streamUrl = m3u8[0];
-                        if (!streamUrl.startsWith('http')) streamUrl = ZET_DOMAIN + streamUrl;
-                        resolveQualities(streamUrl, resolve);
+            }, function () {
+                _this.showEmpty();
+            });
+        };
+
+        this.parseEpisodes = function (doc) {
+            var episodes = [];
+            var seen = {};
+
+            var container = doc.querySelector('#sers-wr');
+            var links = container
+                ? container.querySelectorAll('a')
+                : doc.querySelectorAll('a[href*="episode"]');
+
+            links.forEach(function (a) {
+                var href = a.getAttribute('href') || '';
+                if (!href || href === '#' || seen[href]) return;
+                seen[href] = true;
+
+                var t = a.textContent.trim();
+                var epMatch = href.match(/episode-?(\d+)/i);
+
+                episodes.push({
+                    title: t || ('Серія ' + (episodes.length + 1)),
+                    url: href.startsWith('http') ? href : UAFIX + href
+                });
+            });
+
+            return episodes;
+        };
+
+        this.parseSeasons = function (doc) {
+            var seasons = [];
+            var seen = {};
+
+            doc.querySelectorAll('a[href*="sezon-"], a[href*="season-"]').forEach(function (a) {
+                var href = a.getAttribute('href') || '';
+                if (!href || href === '#' || seen[href]) return;
+                if (href.match(/episode/i)) return;
+                seen[href] = true;
+
+                var t = a.textContent.trim();
+                seasons.push({
+                    title: t || ('Сезон ' + (seasons.length + 1)),
+                    url: href.startsWith('http') ? href : UAFIX + href
+                });
+            });
+
+            return seasons;
+        };
+
+        this.showItems = function (items, type) {
+            var _this = this;
+
+            _this.activity.loader(false);
+            _this.activity.toggle();
+
+            items.forEach(function (item) {
+                var el = $('<div class="selector" style="padding:0.5em 0">' +
+                    '<div style="padding:0.7em 1em;background:rgba(255,255,255,0.06);border-radius:0.3em">' +
+                    '<div style="font-size:1.3em;color:white">' + escapeHtml(item.title) + '</div>' +
+                    '</div></div>');
+
+                el.on('hover:enter', function () {
+                    if (type === 'episode') {
+                        _this.loadEpisode(item.url, item.title);
                     } else {
-                        resolve({ url: '' });
+                        Lampa.Activity.push({
+                            url: '',
+                            title: item.title,
+                            component: 'uafix_page',
+                            page_url: item.url,
+                            page_title: item.title,
+                            movie: object.movie
+                        });
                     }
-
-                }).catch(function () {
-                    resolve({ url: '' });
+                }).on('hover:focus', function (e) {
+                    last = e.target;
+                    scroll.update($(e.target), true);
                 });
 
-            }).catch(function () {
-                resolve({ url: '' });
+                scroll.append(el);
+            });
+
+            Lampa.Controller.enable('content');
+        };
+
+        this.loadEpisode = function (url, title) {
+            var _this = this;
+
+            _this.activity.loader(true);
+
+            getRequest(url, function (text) {
+                _this.activity.loader(false);
+
+                var vodMatch = text.match(/https?:\/\/zetvideo\.net\/vod\/(\d+)/);
+                if (vodMatch) {
+                    _this.resolveAndPlay(vodMatch[1], title);
+                    return;
+                }
+
+                var direct = text.match(/https?:\/\/zetvideo\.net\/vid\/[^"'\s]+\.m3u8/);
+                if (direct) {
+                    playWithQualities(direct[0], title);
+                    return;
+                }
+
+                Lampa.Noty.show('Потік не знайдено');
+
+            }, function () {
+                _this.activity.loader(false);
+                Lampa.Noty.show('Помилка завантаження');
             });
         };
 
-        function resolveQualities(masterUrl, resolve) {
-            get(masterUrl).then(function (m3u8) {
-                var qualities = {};
-                var lines = m3u8.split('\n');
+        this.resolveAndPlay = function (vodId, title) {
+            var _this = this;
 
-                for (var i = 0; i < lines.length; i++) {
-                    var line = lines[i].trim();
-                    if (line.startsWith('#EXT-X-STREAM-INF')) {
-                        var resMatch = line.match(/RESOLUTION=(\d+)x(\d+)/);
-                        var bw = line.match(/BANDWIDTH=(\d+)/);
-                        var label = resMatch ? resMatch[2] + 'p' : (bw ? Math.round(parseInt(bw[1]) / 1000) + 'k' : 'auto');
+            _this.activity.loader(true);
 
-                        if (i + 1 < lines.length) {
-                            var nextLine = lines[i + 1].trim();
-                            if (nextLine && !nextLine.startsWith('#')) {
-                                if (!nextLine.startsWith('http')) {
-                                    nextLine = masterUrl.replace(/\/[^\/]*$/, '/') + nextLine;
-                                }
-                                qualities[label] = nextLine;
+            getRequest(ZET + '/vod/' + vodId, function (text) {
+                _this.activity.loader(false);
+
+                var m3u8 = null;
+
+                var m = text.match(/https?:\/\/zetvideo\.net\/vid\/[^"'\s]+\.m3u8/);
+                if (m) { m3u8 = m[0]; }
+
+                if (!m3u8) {
+                    var v = text.match(/<video[^>]+src=["']([^"']+\.m3u8[^"']*)/);
+                    if (v) m3u8 = v[1].startsWith('http') ? v[1] : ZET + v[1];
+                }
+
+                if (!m3u8) {
+                    var a = text.match(/["']([^"'\s]*\.m3u8[^"'\s]*)/);
+                    if (a) m3u8 = a[1].startsWith('http') ? a[1] : ZET + a[1];
+                }
+
+                if (m3u8) {
+                    playWithQualities(m3u8, title);
+                } else {
+                    Lampa.Noty.show('Потік не знайдено');
+                }
+
+            }, function () {
+                _this.activity.loader(false);
+                Lampa.Noty.show('Помилка ZetVideo');
+            });
+        };
+
+        this.showEmpty = function () {
+            this.activity.loader(false);
+            this.activity.toggle();
+            scroll.append($('<div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div>'));
+            Lampa.Controller.enable('content');
+        };
+
+        this.render  = function () { return files.render(); };
+        this.back    = function () { Lampa.Activity.backward(); };
+        this.pause   = function () {};
+        this.stop    = function () { network.clear(); };
+        this.destroy = function () { network.clear(); scroll.destroy(); files.destroy(); };
+    }
+
+    // ============ PLAY WITH QUALITIES ============
+
+    function playWithQualities(masterUrl, title) {
+        getRequest(masterUrl, function (text) {
+            var qualities = {};
+            var lines = text.split('\n');
+
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].trim();
+                if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
+                    var res = line.match(/RESOLUTION=\d+x(\d+)/);
+                    var label = res ? res[1] + 'p' : 'auto';
+
+                    if (i + 1 < lines.length) {
+                        var next = lines[i + 1].trim();
+                        if (next && next.indexOf('#') !== 0) {
+                            if (next.indexOf('http') !== 0) {
+                                next = masterUrl.replace(/\/[^\/]*$/, '/') + next;
                             }
+                            qualities[label] = next;
                         }
                     }
                 }
+            }
 
-                if (Object.keys(qualities).length === 0) {
-                    qualities['auto'] = masterUrl;
-                }
+            if (!Object.keys(qualities).length) {
+                qualities['auto'] = masterUrl;
+            }
 
-                resolve({
-                    url: qualities[Object.keys(qualities)[0]],
-                    quality: qualities,
-                });
+            var keys = Object.keys(qualities);
 
-            }).catch(function () {
-                resolve({
-                    url: masterUrl,
-                    quality: { auto: masterUrl },
+            Lampa.Player.play({
+                title: title || 'UAFlix',
+                url: qualities[keys[0]],
+                quality: qualities
+            });
+
+            Lampa.Player.playlist([]);
+
+        }, function () {
+            Lampa.Player.play({
+                title: title || 'UAFlix',
+                url: masterUrl,
+                quality: { auto: masterUrl }
+            });
+            Lampa.Player.playlist([]);
+        });
+    }
+
+    // ============ REGISTER ============
+
+    Lampa.Component.add(PLUGIN_NAME, uafixComponent);
+    Lampa.Component.add('uafix_page', uafixPageComponent);
+
+    Lampa.Listener.follow('full', function (e) {
+        if (e.type == 'complite') {
+            var render = e.object.activity.render();
+            if (!render || render.find('.view--uafix').length) return;
+
+            var btn = $('<div class="full-start__button selector view--uafix">' +
+                '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="22" height="22">' +
+                '<path d="M8 5v14l11-7z" fill="currentColor"/>' +
+                '</svg>' +
+                '<span>UAFlix</span>' +
+                '</div>');
+
+            btn.on('hover:enter', function () {
+                Lampa.Activity.push({
+                    url: '',
+                    title: 'UAFlix',
+                    component: PLUGIN_NAME,
+                    search: e.data.movie.title || e.data.movie.name,
+                    movie: e.data.movie,
+                    page: 1
                 });
             });
-        }
-    }
 
-    // Регистрация балансера
-    if (typeof Lampa !== 'undefined') {
-        if (Lampa.Balancer) {
-            Lampa.Balancer.add('uafix', UAFixBalancer);
+            render.find('.view--torrent').after(btn);
         }
+    });
 
-        // Альтернативная регистрация через Online
-        if (typeof $online_sources !== 'undefined') {
-            $online_sources['uafix'] = UAFixBalancer;
-        }
-
-        console.log('[UAFlix] Plugin v1.0.0 loaded');
-    }
+    console.log('[UAFlix] Plugin loaded');
 
 })();
