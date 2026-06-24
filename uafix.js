@@ -15,9 +15,8 @@
 
     function proxyUrl(url) {
         if (!url) return url;
-        // Не проксировать уже проксированные
         if (url.indexOf(PROXY) === 0) return url;
-        return PROXY + encodeURIComponent(url);
+        return PROXY + url;
     }
 
     function getRequest(url, success, error, useProxy) {
