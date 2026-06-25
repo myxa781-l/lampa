@@ -315,10 +315,10 @@
         var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
-        var filter = new Lampa.Filter(object);
         var last = false, initialized = false;
         var allEpisodes = [];
         var currentSeasonFilter = 0; // 0 = все сезоны
+        var seasonNums = [];
 
         this.create = function () { return this.render(); };
 
@@ -330,17 +330,7 @@
             if (!initialized) {
                 initialized = true;
 
-                filter.onBack = function () { _this.start(); };
-                filter.onSelect = function (type, a, b) {
-                    if (type === 'season') {
-                        currentSeasonFilter = parseInt(a.value) || 0;
-                        _this.renderFilteredEpisodes();
-                    }
-                };
-
-                files.appendHead(filter.render());
                 files.appendFiles(scroll.render());
-
                 scroll.minus(files.render().find('.explorer__files-head'));
                 scroll.body().addClass('torrent-list');
 
@@ -356,7 +346,7 @@
                 down: function () { Navigator.move('down'); },
                 right: function () {
                     if (Navigator.canmove('right')) Navigator.move('right');
-                    else if (allEpisodes.length && _this.hasMultipleSeasons()) filter.show('Сезон', 'season');
+                    else if (seasonNums.length > 1) _this.showSeasonSelect();
                 },
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('menu'); },
                 back: this.back
@@ -364,30 +354,29 @@
             Lampa.Controller.toggle('content');
         };
 
-        this.hasMultipleSeasons = function () {
-            var seasons = {};
-            allEpisodes.forEach(function (ep) { seasons[ep.season] = true; });
-            return Object.keys(seasons).length > 1;
+        this.showSeasonSelect = function () {
+            var _this = this;
+            var items = [{ title: 'Всі сезони', season: 0, selected: currentSeasonFilter === 0 }];
+            seasonNums.forEach(function (s) {
+                items.push({ title: 'Сезон ' + s, season: s, selected: currentSeasonFilter === s });
+            });
+            Lampa.Select.show({
+                title: 'Сезон',
+                items: items,
+                onSelect: function (item) {
+                    currentSeasonFilter = item.season;
+                    _this.renderFilteredEpisodes();
+                },
+                onBack: function () {
+                    Lampa.Controller.toggle('content');
+                }
+            });
         };
 
-        this.setupSeasonFilter = function () {
-            var seasons = {};
-            allEpisodes.forEach(function (ep) { seasons[ep.season] = true; });
-            var seasonNums = Object.keys(seasons).map(Number).sort(function(a,b){return a-b;});
-
-            if (seasonNums.length <= 1) return; // нет смысла в фильтре
-
-            var items = [{ title: 'Всі сезони', value: '0' }];
-            seasonNums.forEach(function (s) {
-                items.push({ title: 'Сезон ' + s, value: String(s) });
-            });
-
-            filter.add('season', {
-                title: 'Сезон',
-                items: items
-            });
-
-            filter.set('season', '0');
+        this.detectSeasons = function () {
+            var seen = {};
+            allEpisodes.forEach(function (ep) { seen[ep.season] = true; });
+            seasonNums = Object.keys(seen).map(Number).sort(function(a,b){return a-b;});
         };
 
         this.renderFilteredEpisodes = function () {
@@ -412,7 +401,7 @@
                         return a.episode - b.episode;
                     });
                     allEpisodes = eps;
-                    _this.setupSeasonFilter();
+                    _this.detectSeasons();
                     _this.showEpisodes(eps);
                     return;
                 }
