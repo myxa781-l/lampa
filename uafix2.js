@@ -19,15 +19,15 @@
     // ============ TEMPLATES ============
 
     Lampa.Template.add('uafix_item', '<div class="online selector">\
-        <div class="online__body">\
-            <div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">\
-                <svg style="height:2.4em;width:2.4em" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\
-                    <circle cx="64" cy="64" r="56" stroke="white" stroke-width="16"/>\
-                    <path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="white"/>\
-                </svg>\
+        <div class="online__body" style="display:flex;align-items:center">\
+            <div style="position:relative;width:12em;height:7em;flex-shrink:0;border-radius:0.3em;overflow:hidden;background:#111">\
+                <img src="{img}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">\
+                <div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:2em;color:white;text-shadow:0 0 8px black">{episode}</div>\
             </div>\
-            <div class="online__title" style="padding-left:2.1em">{title}</div>\
-            <div class="online__quality" style="padding-left:3.4em">{quality}</div>\
+            <div style="padding-left:1em">\
+                <div class="online__title">{title}</div>\
+                <div class="online__quality">{quality}</div>\
+            </div>\
         </div>\
     </div>');
 
@@ -426,7 +426,9 @@
                 var realIdx = allEpisodes.indexOf(ep);
                 var item = Lampa.Template.get('uafix_item', {
                     title: ep.title,
-                    quality: 'S' + formatEp(ep.season) + 'E' + formatEp(ep.episode)
+                    quality: 'S' + formatEp(ep.season) + 'E' + formatEp(ep.episode),
+                    img: ep.poster || '',
+                    episode: formatEp(ep.episode)
                 });
                 item.on('hover:enter', function () {
                     _this.playEpisode(ep, realIdx);
