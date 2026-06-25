@@ -77,6 +77,12 @@
                 scroll.minus(files.render().find('.explorer__files-head'));
 
                 filter.onBack = function () { _this.start(); };
+                filter.onSearch = function (value) {
+                    Lampa.Activity.replace({
+                        search: value,
+                        clarification: true
+                    });
+                };
                 filter.onSelect = function (type, a, b) {
                     if (a.stype === 'voice') { choice.voice = b.index; }
                     if (a.stype === 'season') { choice.season = b.index; }
