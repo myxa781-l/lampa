@@ -70,7 +70,18 @@
             if (href.indexOf('http') !== 0) href = UAFIX + href;
             var epMatch = href.match(/episode-?(\d+)/i);
             var epNum = epMatch ? parseInt(epMatch[1]) : episodes.length + 1;
-            episodes.push({ title: titleText || ('Серія ' + epNum), url: href, poster: thumb, episode: epNum });
+
+            // Определяем сезон из URL или заголовка
+            var season = 1;
+            var sFromUrl = href.match(/sezon-?(\d+)/i);
+            if (sFromUrl) {
+                season = parseInt(sFromUrl[1]);
+            } else {
+                var sFromTitle = titleText.match(/[Сс]езон\s*(\d+)/i);
+                if (sFromTitle) season = parseInt(sFromTitle[1]);
+            }
+
+            episodes.push({ title: titleText || ('Серія ' + epNum), url: href, poster: thumb, episode: epNum, season: season });
         });
         return episodes;
     }
@@ -114,30 +125,30 @@
             } else { callback(null, null); }
         }, function () { callback(null, null); });
     }
-function getMasterQualities(masterUrl, callback) {
-    var proxied = proxyUrl(masterUrl);
-    fetch(proxied).then(function(r){ return r.text(); }).then(function(text) {
-        var qualities = {}, lines = text.split('\n');
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i].trim();
-            if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
-                var res = line.match(/RESOLUTION=\d+x(\d+)/);
-                var label = res ? res[1] + 'p' : 'auto';
-                if (i + 1 < lines.length) {
-                    var next = lines[i + 1].trim();
-                    if (next && next.indexOf('#') !== 0) {
-                        qualities[label] = next;
+
+    function getMasterQualities(masterUrl, callback) {
+        var proxied = proxyUrl(masterUrl);
+        fetch(proxied).then(function(r){ return r.text(); }).then(function(text) {
+            var qualities = {}, lines = text.split('\n');
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].trim();
+                if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
+                    var res = line.match(/RESOLUTION=\d+x(\d+)/);
+                    var label = res ? res[1] + 'p' : 'auto';
+                    if (i + 1 < lines.length) {
+                        var next = lines[i + 1].trim();
+                        if (next && next.indexOf('#') !== 0) {
+                            qualities[label] = next;
+                        }
                     }
                 }
             }
-        }
-        if (!Object.keys(qualities).length) qualities['auto'] = proxied;
-        var sorted = Object.keys(qualities).sort(function(a,b){ return (parseInt(b)||0)-(parseInt(a)||0); });
-        var sQ = {}; sorted.forEach(function(k){ sQ[k] = qualities[k]; });
-        callback(sQ[sorted[0]], sQ);
-    }).catch(function(){ callback(proxied, {auto: proxied}); });
-}
-   
+            if (!Object.keys(qualities).length) qualities['auto'] = proxied;
+            var sorted = Object.keys(qualities).sort(function(a,b){ return (parseInt(b)||0)-(parseInt(a)||0); });
+            var sQ = {}; sorted.forEach(function(k){ sQ[k] = qualities[k]; });
+            callback(sQ[sorted[0]], sQ);
+        }).catch(function(){ callback(proxied, {auto: proxied}); });
+    }
 
     // ============ SEARCH COMPONENT ============
 
@@ -263,6 +274,7 @@ function getMasterQualities(masterUrl, callback) {
 
         this.drawResults = function (results) {
             var _this = this;
+            scroll.clear();  // <-- очистка перед отрисовкой
             results.forEach(function (r) {
                 var item = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="display:flex;align-items:center;padding:0.8em 1em;background:rgba(255,255,255,0.06);border-radius:0.3em;transition:background 0.1s">' +
                     (r.poster ? '<div style="width:4em;height:5.5em;flex-shrink:0;margin-right:1em;border-radius:0.2em;overflow:hidden;background:#111"><img src="' + escapeHtml(r.poster) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>' : '') +
@@ -285,6 +297,7 @@ function getMasterQualities(masterUrl, callback) {
 
         this.showEmpty = function () {
             this.activity.loader(false); this.activity.toggle();
+            scroll.clear();  // <-- очистка
             scroll.append($('<div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div>'));
             Lampa.Controller.enable('content');
         };
@@ -302,8 +315,10 @@ function getMasterQualities(masterUrl, callback) {
         var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
+        var filter = new Lampa.Filter(object);
         var last = false, initialized = false;
         var allEpisodes = [];
+        var currentSeasonFilter = 0; // 0 = все сезоны
 
         this.create = function () { return this.render(); };
 
@@ -315,7 +330,17 @@ function getMasterQualities(masterUrl, callback) {
             if (!initialized) {
                 initialized = true;
 
+                filter.onBack = function () { _this.start(); };
+                filter.onSelect = function (type, a, b) {
+                    if (type === 'season') {
+                        currentSeasonFilter = parseInt(a.value) || 0;
+                        _this.renderFilteredEpisodes();
+                    }
+                };
+
+                files.appendHead(filter.render());
                 files.appendFiles(scroll.render());
+
                 scroll.minus(files.render().find('.explorer__files-head'));
                 scroll.body().addClass('torrent-list');
 
@@ -329,11 +354,49 @@ function getMasterQualities(masterUrl, callback) {
                 },
                 up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
                 down: function () { Navigator.move('down'); },
-                right: function () { Navigator.move('right'); },
+                right: function () {
+                    if (Navigator.canmove('right')) Navigator.move('right');
+                    else if (allEpisodes.length && _this.hasMultipleSeasons()) filter.show('Сезон', 'season');
+                },
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('menu'); },
                 back: this.back
             });
             Lampa.Controller.toggle('content');
+        };
+
+        this.hasMultipleSeasons = function () {
+            var seasons = {};
+            allEpisodes.forEach(function (ep) { seasons[ep.season] = true; });
+            return Object.keys(seasons).length > 1;
+        };
+
+        this.setupSeasonFilter = function () {
+            var seasons = {};
+            allEpisodes.forEach(function (ep) { seasons[ep.season] = true; });
+            var seasonNums = Object.keys(seasons).map(Number).sort(function(a,b){return a-b;});
+
+            if (seasonNums.length <= 1) return; // нет смысла в фильтре
+
+            var items = [{ title: 'Всі сезони', value: '0' }];
+            seasonNums.forEach(function (s) {
+                items.push({ title: 'Сезон ' + s, value: String(s) });
+            });
+
+            filter.add('season', {
+                title: 'Сезон',
+                items: items
+            });
+
+            filter.set('season', '0');
+        };
+
+        this.renderFilteredEpisodes = function () {
+            var _this = this;
+            var eps = allEpisodes;
+            if (currentSeasonFilter > 0) {
+                eps = allEpisodes.filter(function (ep) { return ep.season === currentSeasonFilter; });
+            }
+            _this.showEpisodes(eps);
         };
 
         this.loadPage = function () {
@@ -344,8 +407,12 @@ function getMasterQualities(masterUrl, callback) {
 
             loadAllPages(url, 1, [], function (eps) {
                 if (eps.length) {
-                    eps.sort(function (a, b) { return a.episode - b.episode; });
+                    eps.sort(function (a, b) {
+                        if (a.season !== b.season) return a.season - b.season;
+                        return a.episode - b.episode;
+                    });
                     allEpisodes = eps;
+                    _this.setupSeasonFilter();
                     _this.showEpisodes(eps);
                     return;
                 }
@@ -376,7 +443,14 @@ function getMasterQualities(masterUrl, callback) {
             _this.activity.loader(false);
             _this.activity.toggle();
 
+            scroll.clear();  // <-- очистка перед отрисовкой
+            last = false;
+
             episodes.forEach(function (ep, idx) {
+                // Находим реальный индекс в allEpisodes для плейлиста
+                var realIdx = allEpisodes.indexOf(ep);
+                if (realIdx === -1) realIdx = idx;
+
                 var item = $('<div class="selector" style="padding:0.5em 0">' +
                     '<div class="uafix-item" style="display:flex;align-items:center;padding:0.5em;background:rgba(0,0,0,0.3);border-radius:0.3em;transition:background 0.1s">' +
                     '<div style="position:relative;width:12em;height:7em;flex-shrink:0;border-radius:0.3em;overflow:hidden;background:#111">' +
@@ -387,7 +461,7 @@ function getMasterQualities(masterUrl, callback) {
                     '</div></div>');
 
                 item.on('hover:enter', function () {
-                    _this.playEpisode(ep, idx);
+                    _this.playEpisode(ep, realIdx);
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
@@ -406,6 +480,9 @@ function getMasterQualities(masterUrl, callback) {
             var _this = this;
             _this.activity.loader(false);
             _this.activity.toggle();
+
+            scroll.clear();  // <-- очистка перед отрисовкой
+            last = false;
 
             seasons.forEach(function (s) {
                 var el = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="padding:1em;background:rgba(255,255,255,0.06);border-radius:0.3em;font-size:1.3em;color:white;transition:background 0.1s">' + escapeHtml(s.title) + '</div></div>');
@@ -481,6 +558,8 @@ function getMasterQualities(masterUrl, callback) {
 
         this.showEmpty = function () {
             this.activity.loader(false); this.activity.toggle();
+            scroll.clear();  // <-- очистка
+            last = false;
             scroll.append($('<div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div>'));
             Lampa.Controller.enable('content');
         };
