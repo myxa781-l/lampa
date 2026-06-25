@@ -31,6 +31,14 @@
         return t ? String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
     }
 
+    function proxyStream(url) {
+        if (!url) return url;
+        // Для внешних плееров (Android, WebOS) — прямые URL без прокси
+        var player = Lampa.Storage.field('player');
+        if (player && player !== 'inner') return url;
+        return proxyUrl(url);
+    }
+
     function formatEp(num) { return (num < 10 ? '0' : '') + num; }
 
     function getUkrainianTitle(movie, callback) {
@@ -127,16 +135,16 @@
                         var next = lines[i + 1].trim();
                         if (next && next.indexOf('#') !== 0) {
                             if (next.indexOf('http') !== 0) next = masterUrl.replace(/\/[^\/]*$/, '/') + next;
-                            qualities[label] = proxyUrl(next);
+                            qualities[label] = proxyStream(next);
                         }
                     }
                 }
             }
-            if (!Object.keys(qualities).length) qualities['auto'] = proxyUrl(masterUrl);
+            if (!Object.keys(qualities).length) qualities['auto'] = proxyStream(masterUrl);
             var sorted = Object.keys(qualities).sort(function (a, b) { return (parseInt(b)||0) - (parseInt(a)||0); });
             var sQ = {}; sorted.forEach(function (k) { sQ[k] = qualities[k]; });
             callback(sQ[sorted[0]], sQ);
-        }, function () { callback(proxyUrl(masterUrl), {auto: proxyUrl(masterUrl)}); });
+        }, function () { callback(proxyStream(masterUrl), {auto: proxyStream(masterUrl)}); });
     }
 
     // ============ SEARCH COMPONENT ============
