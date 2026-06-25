@@ -126,8 +126,7 @@
                     if (i + 1 < lines.length) {
                         var next = lines[i + 1].trim();
                         if (next && next.indexOf('#') !== 0) {
-                            if (next.indexOf('http') !== 0) next = masterUrl.replace(/\/[^\/]*$/, '/') + next;
-                            qualities[label] = proxyUrl(next);
+                            qualities[label] = next;
                         }
                     }
                 }
