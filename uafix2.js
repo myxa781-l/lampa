@@ -274,9 +274,10 @@
 
         this.drawResults = function (results) {
             var _this = this;
-            scroll.clear();  // <-- очистка перед отрисовкой
+            scroll.clear();
+            scroll.reset();
             results.forEach(function (r) {
-                var item = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="display:flex;align-items:center;padding:0.8em 1em;background:rgba(255,255,255,0.06);border-radius:0.3em;transition:background 0.1s">' +
+                var item = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="display:flex;align-items:center;padding:0.8em 1em;background:rgba(255,255,255,0.06);border-radius:0.3em">' +
                     (r.poster ? '<div style="width:4em;height:5.5em;flex-shrink:0;margin-right:1em;border-radius:0.2em;overflow:hidden;background:#111"><img src="' + escapeHtml(r.poster) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>' : '') +
                     '<div style="font-size:1.3em;color:white">' + escapeHtml(r.title) + '</div></div></div>');
 
@@ -285,10 +286,7 @@
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
-                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.2)', 'outline': '2px solid rgba(255,255,255,0.8)', 'outline-offset': '-2px' });
-                }).on('hover:blur', function (e) {
-                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.06)', 'outline': 'none' });
-                });
+                }).on('hover:blur', function () {});
 
                 scroll.append(item);
             });
@@ -297,7 +295,7 @@
 
         this.showEmpty = function () {
             this.activity.loader(false); this.activity.toggle();
-            scroll.clear();  // <-- очистка
+            scroll.clear(); scroll.reset();
             scroll.append($('<div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div>'));
             Lampa.Controller.enable('content');
         };
@@ -315,9 +313,10 @@
         var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({ mask: true, over: true });
         var files = new Lampa.Explorer(object);
+        var filter = new Lampa.Filter(object);
         var last = false, initialized = false;
         var allEpisodes = [];
-        var currentSeasonFilter = 0; // 0 = все сезоны
+        var currentSeasonIdx = -1; // -1 = все
         var seasonNums = [];
 
         this.create = function () { return this.render(); };
@@ -330,7 +329,17 @@
             if (!initialized) {
                 initialized = true;
 
+                filter.onBack = function () { _this.start(); };
+                filter.onSelect = function (type, a, b) {
+                    if (type === 'filter' && a.stype === 'season') {
+                        currentSeasonIdx = b.index;
+                        _this.renderFilteredEpisodes();
+                    }
+                };
+
+                files.appendHead(filter.render());
                 files.appendFiles(scroll.render());
+
                 scroll.minus(files.render().find('.explorer__files-head'));
                 scroll.body().addClass('torrent-list');
 
@@ -346,7 +355,7 @@
                 down: function () { Navigator.move('down'); },
                 right: function () {
                     if (Navigator.canmove('right')) Navigator.move('right');
-                    else if (seasonNums.length > 1) _this.showSeasonSelect();
+                    else if (seasonNums.length > 1) filter.show('Сезон', 'filter');
                 },
                 left: function () { if (Navigator.canmove('left')) Navigator.move('left'); else Lampa.Controller.toggle('menu'); },
                 back: this.back
@@ -354,38 +363,44 @@
             Lampa.Controller.toggle('content');
         };
 
-        this.showSeasonSelect = function () {
-            var _this = this;
-            var items = [{ title: 'Всі сезони', season: 0, selected: currentSeasonFilter === 0 }];
-            seasonNums.forEach(function (s) {
-                items.push({ title: 'Сезон ' + s, season: s, selected: currentSeasonFilter === s });
-            });
-            Lampa.Select.show({
-                title: 'Сезон',
-                items: items,
-                onSelect: function (item) {
-                    currentSeasonFilter = item.season;
-                    _this.renderFilteredEpisodes();
-                },
-                onBack: function () {
-                    Lampa.Controller.toggle('content');
-                }
-            });
-        };
-
-        this.detectSeasons = function () {
+        this.setupSeasonFilter = function () {
             var seen = {};
             allEpisodes.forEach(function (ep) { seen[ep.season] = true; });
             seasonNums = Object.keys(seen).map(Number).sort(function(a,b){return a-b;});
+
+            if (seasonNums.length <= 1) return;
+
+            var items = ['Всі сезони'];
+            seasonNums.forEach(function (s) { items.push('Сезон ' + s); });
+
+            var subitems = items.map(function (name, i) {
+                return { title: name, selected: i === 0, index: i };
+            });
+
+            filter.set('filter', [{
+                title: 'Сезон',
+                subtitle: items[0],
+                items: subitems,
+                stype: 'season'
+            }]);
         };
 
         this.renderFilteredEpisodes = function () {
-            var _this = this;
             var eps = allEpisodes;
-            if (currentSeasonFilter > 0) {
-                eps = allEpisodes.filter(function (ep) { return ep.season === currentSeasonFilter; });
+            if (currentSeasonIdx > 0 && seasonNums[currentSeasonIdx - 1]) {
+                var targetSeason = seasonNums[currentSeasonIdx - 1];
+                eps = allEpisodes.filter(function (ep) { return ep.season === targetSeason; });
             }
-            _this.showEpisodes(eps);
+            this.resetScroll();
+            this.drawEpisodeItems(eps);
+            Lampa.Controller.enable('content');
+        };
+
+        this.resetScroll = function () {
+            scroll.render().find('.empty').remove();
+            scroll.clear();
+            scroll.reset();
+            last = false;
         };
 
         this.loadPage = function () {
@@ -401,8 +416,11 @@
                         return a.episode - b.episode;
                     });
                     allEpisodes = eps;
-                    _this.detectSeasons();
-                    _this.showEpisodes(eps);
+                    _this.activity.loader(false);
+                    _this.activity.toggle();
+                    _this.setupSeasonFilter();
+                    _this.drawEpisodeItems(eps);
+                    Lampa.Controller.enable('content');
                     return;
                 }
 
@@ -427,21 +445,15 @@
             });
         };
 
-        this.showEpisodes = function (episodes) {
+        this.drawEpisodeItems = function (episodes) {
             var _this = this;
-            _this.activity.loader(false);
-            _this.activity.toggle();
-
-            scroll.clear();  // <-- очистка перед отрисовкой
-            last = false;
 
             episodes.forEach(function (ep, idx) {
-                // Находим реальный индекс в allEpisodes для плейлиста
                 var realIdx = allEpisodes.indexOf(ep);
                 if (realIdx === -1) realIdx = idx;
 
                 var item = $('<div class="selector" style="padding:0.5em 0">' +
-                    '<div class="uafix-item" style="display:flex;align-items:center;padding:0.5em;background:rgba(0,0,0,0.3);border-radius:0.3em;transition:background 0.1s">' +
+                    '<div class="uafix-item" style="display:flex;align-items:center;padding:0.5em;background:rgba(0,0,0,0.3);border-radius:0.3em">' +
                     '<div style="position:relative;width:12em;height:7em;flex-shrink:0;border-radius:0.3em;overflow:hidden;background:#111">' +
                     (ep.poster ? '<img src="' + escapeHtml(ep.poster) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">' : '') +
                     '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:2em;color:white;text-shadow:0 0 8px black">' + formatEp(ep.episode) + '</div>' +
@@ -454,15 +466,10 @@
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
-                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.2)', 'outline': '2px solid rgba(255,255,255,0.8)', 'outline-offset': '-2px' });
-                }).on('hover:blur', function (e) {
-                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(0,0,0,0.3)', 'outline': 'none' });
-                });
+                }).on('hover:blur', function () {});
 
                 scroll.append(item);
             });
-
-            Lampa.Controller.enable('content');
         };
 
         this.showSeasons = function (seasons) {
@@ -470,20 +477,14 @@
             _this.activity.loader(false);
             _this.activity.toggle();
 
-            scroll.clear();  // <-- очистка перед отрисовкой
-            last = false;
-
             seasons.forEach(function (s) {
-                var el = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="padding:1em;background:rgba(255,255,255,0.06);border-radius:0.3em;font-size:1.3em;color:white;transition:background 0.1s">' + escapeHtml(s.title) + '</div></div>');
+                var el = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="padding:1em;background:rgba(255,255,255,0.06);border-radius:0.3em;font-size:1.3em;color:white">' + escapeHtml(s.title) + '</div></div>');
                 el.on('hover:enter', function () {
                     Lampa.Activity.push({ url:'', title:s.title, component:'uafix_page', page_url:s.url, page_title:s.title, movie:object.movie });
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
-                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.2)', 'outline': '2px solid rgba(255,255,255,0.8)', 'outline-offset': '-2px' });
-                }).on('hover:blur', function (e) {
-                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.06)', 'outline': 'none' });
-                });
+                }).on('hover:blur', function () {});
                 scroll.append(el);
             });
             Lampa.Controller.enable('content');
@@ -547,7 +548,7 @@
 
         this.showEmpty = function () {
             this.activity.loader(false); this.activity.toggle();
-            scroll.clear();  // <-- очистка
+            scroll.clear(); scroll.reset();
             last = false;
             scroll.append($('<div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div>'));
             Lampa.Controller.enable('content');
