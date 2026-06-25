@@ -9,6 +9,37 @@
     var PROXY = 'https://uafix-proxy.myxa78.workers.dev/?url=';
     var PLUGIN_NAME = 'uafix_online';
 
+    // ============ TEMPLATES ============
+
+    Lampa.Template.add('uafix_item', '<div class="online selector">\
+        <div class="online__body">\
+            <div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">\
+                <svg style="height:2.4em;width:2.4em" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\
+                    <circle cx="64" cy="64" r="56" stroke="white" stroke-width="16"/>\
+                    <path d="M90.5 64.3827L50 87.7654L50 41L90.5 64.3827Z" fill="white"/>\
+                </svg>\
+            </div>\
+            <div class="online__title" style="padding-left:2.1em">{title}</div>\
+            <div class="online__quality" style="padding-left:3.4em">{quality}</div>\
+        </div>\
+    </div>');
+
+    Lampa.Template.add('uafix_folder', '<div class="online selector">\
+        <div class="online__body">\
+            <div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">\
+                <svg style="height:2.4em;width:2.4em" viewBox="0 0 128 112" fill="none" xmlns="http://www.w3.org/2000/svg">\
+                    <rect y="20" width="128" height="92" rx="13" fill="white"/>\
+                    <path d="M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z" fill="white" fill-opacity="0.23"/>\
+                    <rect x="11" y="8" width="106" height="76" rx="13" fill="white" fill-opacity="0.51"/>\
+                </svg>\
+            </div>\
+            <div class="online__title" style="padding-left:2.1em">{title}</div>\
+            <div class="online__quality" style="padding-left:3.4em">{quality}</div>\
+        </div>\
+    </div>');
+
+    // ============ HELPERS ============
+
     function parseHTML(text) {
         return (new DOMParser()).parseFromString(text, 'text/html');
     }
@@ -27,10 +58,6 @@
         }, false, { dataType: 'text' });
     }
 
-    function escapeHtml(t) {
-        return t ? String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
-    }
-
     function formatEp(num) { return (num < 10 ? '0' : '') + num; }
 
     function getUkrainianTitle(movie, callback) {
@@ -40,10 +67,7 @@
                 var titles = data.titles || data.results || [];
                 var ukTitle = '';
                 for (var i = 0; i < titles.length; i++) {
-                    if (titles[i].iso_3166_1 === 'UA') {
-                        ukTitle = titles[i].title;
-                        break;
-                    }
+                    if (titles[i].iso_3166_1 === 'UA') { ukTitle = titles[i].title; break; }
                 }
                 if (ukTitle) { callback(ukTitle); return; }
                 Lampa.Api.sources.tmdb.get(type + '/' + movie.id, { language: 'uk-UA' }, function (data2) {
@@ -71,15 +95,10 @@
             var epMatch = href.match(/episode-?(\d+)/i);
             var epNum = epMatch ? parseInt(epMatch[1]) : episodes.length + 1;
 
-            // Определяем сезон из URL или заголовка
             var season = 1;
             var sFromUrl = href.match(/sezon-?(\d+)/i);
-            if (sFromUrl) {
-                season = parseInt(sFromUrl[1]);
-            } else {
-                var sFromTitle = titleText.match(/[Сс]езон\s*(\d+)/i);
-                if (sFromTitle) season = parseInt(sFromTitle[1]);
-            }
+            if (sFromUrl) { season = parseInt(sFromUrl[1]); }
+            else { var sFromTitle = titleText.match(/[Сс]езон\s*(\d+)/i); if (sFromTitle) season = parseInt(sFromTitle[1]); }
 
             episodes.push({ title: titleText || ('Серія ' + epNum), url: href, poster: thumb, episode: epNum, season: season });
         });
@@ -91,23 +110,12 @@
         getRequest(url, function (text) {
             var doc = parseHTML(text);
             var eps = parseEpisodesFromDoc(doc);
-            if (eps.length === 0) {
-                callback(accumulated);
-            } else {
-                var newEps = eps.filter(function(ep) {
-                    return !accumulated.some(function(a) { return a.url === ep.url; });
-                });
-                if (newEps.length === 0) {
-                    callback(accumulated);
-                } else {
-                    var all = accumulated.concat(newEps);
-                    if (page < 20) {
-                        loadAllPages(baseUrl, page + 1, all, callback);
-                    } else {
-                        callback(all);
-                    }
-                }
-            }
+            if (eps.length === 0) { callback(accumulated); return; }
+            var newEps = eps.filter(function(ep) { return !accumulated.some(function(a) { return a.url === ep.url; }); });
+            if (newEps.length === 0) { callback(accumulated); return; }
+            var all = accumulated.concat(newEps);
+            if (page < 20) { loadAllPages(baseUrl, page + 1, all, callback); }
+            else { callback(all); }
         }, function () { callback(accumulated); });
     }
 
@@ -137,9 +145,7 @@
                     var label = res ? res[1] + 'p' : 'auto';
                     if (i + 1 < lines.length) {
                         var next = lines[i + 1].trim();
-                        if (next && next.indexOf('#') !== 0) {
-                            qualities[label] = next;
-                        }
+                        if (next && next.indexOf('#') !== 0) { qualities[label] = next; }
                     }
                 }
             }
@@ -161,6 +167,14 @@
 
         this.create = function () { return this.render(); };
 
+        this.append = function (item) {
+            item.on('hover:focus', function (e) {
+                last = e.target;
+                scroll.update($(e.target), true);
+            });
+            scroll.append(item);
+        };
+
         this.start = function () {
             var _this = this;
             if (Lampa.Activity.active().activity !== this.activity) return;
@@ -168,18 +182,14 @@
 
             if (!initialized) {
                 initialized = true;
-
                 filter.onBack = function () { _this.start(); };
                 filter.onSearch = function (value) {
                     Lampa.Activity.replace({ search: value, clarification: true });
                 };
-
                 files.appendHead(filter.render());
                 files.appendFiles(scroll.render());
-
                 scroll.minus(files.render().find('.explorer__files-head'));
                 scroll.body().addClass('torrent-list');
-
                 _this.doSearch();
             }
 
@@ -197,16 +207,20 @@
             Lampa.Controller.toggle('content');
         };
 
+        this.reset = function () {
+            last = false;
+            scroll.clear();
+            scroll.reset();
+        };
+
         this.doSearch = function () {
             var _this = this;
             var movie = object.movie;
             var title = movie.title || movie.name || '';
             var origTitle = movie.original_title || movie.original_name || '';
             var query = object.search || title;
-
             if (!query) { _this.showEmpty(); return; }
             _this.activity.loader(true);
-
             _this.searchQuery(query, function (r1) {
                 if (r1.length) { _this.done(r1); return; }
                 if (origTitle && origTitle !== query) {
@@ -236,15 +250,12 @@
             var words = title.split(/[\s,.:;!?]+/).filter(function(w) { return w.length > 3; });
             words.sort(function(a, b) { return b.length - a.length; });
             var keyword = words[0] || '';
-
             if (keyword && keyword !== title) {
                 _this.searchQuery(keyword, function (r4) {
                     if (r4.length) { _this.done(r4); return; }
                     _this.showEmpty();
                 });
-            } else {
-                _this.showEmpty();
-            }
+            } else { _this.showEmpty(); }
         };
 
         this.done = function (results) {
@@ -274,36 +285,30 @@
 
         this.drawResults = function (results) {
             var _this = this;
-            scroll.clear();
-            scroll.reset();
+            _this.reset();
             results.forEach(function (r) {
-                var item = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="display:flex;align-items:center;padding:0.8em 1em;background:rgba(255,255,255,0.06);border-radius:0.3em">' +
-                    (r.poster ? '<div style="width:4em;height:5.5em;flex-shrink:0;margin-right:1em;border-radius:0.2em;overflow:hidden;background:#111"><img src="' + escapeHtml(r.poster) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>' : '') +
-                    '<div style="font-size:1.3em;color:white">' + escapeHtml(r.title) + '</div></div></div>');
-
+                var item = Lampa.Template.get('uafix_folder', { title: r.title, quality: '' });
                 item.on('hover:enter', function () {
                     Lampa.Activity.push({ url:'', title:'UAFlix', component:'uafix_page', page_url:r.url, page_title:r.title, movie:object.movie });
-                }).on('hover:focus', function (e) {
-                    last = e.target;
-                    scroll.update($(e.target), true);
-                }).on('hover:blur', function () {});
-
-                scroll.append(item);
+                });
+                _this.append(item);
             });
             Lampa.Controller.enable('content');
         };
 
         this.showEmpty = function () {
-            this.activity.loader(false); this.activity.toggle();
-            scroll.clear(); scroll.reset();
-            scroll.append($('<div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div>'));
+            this.activity.loader(false);
+            this.activity.toggle();
+            this.reset();
+            var empty = $('<div class="empty"><div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div></div>');
+            scroll.append(empty);
             Lampa.Controller.enable('content');
         };
 
-        this.render = function () { return files.render(); };
-        this.back = function () { Lampa.Activity.backward(); };
-        this.pause = function () {};
-        this.stop = function () { network.clear(); };
+        this.render  = function () { return files.render(); };
+        this.back    = function () { Lampa.Activity.backward(); };
+        this.pause   = function () {};
+        this.stop    = function () { network.clear(); };
         this.destroy = function () { network.clear(); scroll.destroy(); files.destroy(); };
     }
 
@@ -316,10 +321,25 @@
         var filter = new Lampa.Filter(object);
         var last = false, initialized = false;
         var allEpisodes = [];
-        var currentSeasonIdx = -1; // -1 = все
         var seasonNums = [];
+        var chosenSeason = 0; // индекс в seasonNums, 0 = "Всі"
 
         this.create = function () { return this.render(); };
+
+        this.append = function (item) {
+            item.on('hover:focus', function (e) {
+                last = e.target;
+                scroll.update($(e.target), true);
+            });
+            scroll.append(item);
+        };
+
+        this.reset = function () {
+            last = false;
+            scroll.render().find('.empty').remove();
+            scroll.clear();
+            scroll.reset();
+        };
 
         this.start = function () {
             var _this = this;
@@ -332,17 +352,16 @@
                 filter.onBack = function () { _this.start(); };
                 filter.onSelect = function (type, a, b) {
                     if (type === 'filter' && a.stype === 'season') {
-                        currentSeasonIdx = b.index;
-                        _this.renderFilteredEpisodes();
+                        chosenSeason = b.index;
+                        _this.buildFilter();
+                        _this.renderEpisodes();
                     }
                 };
 
                 files.appendHead(filter.render());
                 files.appendFiles(scroll.render());
-
                 scroll.minus(files.render().find('.explorer__files-head'));
                 scroll.body().addClass('torrent-list');
-
                 _this.loadPage();
             }
 
@@ -363,44 +382,52 @@
             Lampa.Controller.toggle('content');
         };
 
-        this.setupSeasonFilter = function () {
-            var seen = {};
-            allEpisodes.forEach(function (ep) { seen[ep.season] = true; });
-            seasonNums = Object.keys(seen).map(Number).sort(function(a,b){return a-b;});
-
+        this.buildFilter = function () {
             if (seasonNums.length <= 1) return;
 
-            var items = ['Всі сезони'];
-            seasonNums.forEach(function (s) { items.push('Сезон ' + s); });
+            var names = ['Всі сезони'];
+            seasonNums.forEach(function (s) { names.push('Сезон ' + s); });
 
-            var subitems = items.map(function (name, i) {
-                return { title: name, selected: i === 0, index: i };
+            var subitems = names.map(function (name, i) {
+                return { title: name, selected: chosenSeason === i, index: i };
             });
 
             filter.set('filter', [{
                 title: 'Сезон',
-                subtitle: items[0],
+                subtitle: names[chosenSeason],
                 items: subitems,
                 stype: 'season'
             }]);
+
+            filter.chosen('filter', chosenSeason > 0 ? ['Сезон ' + seasonNums[chosenSeason - 1]] : []);
         };
 
-        this.renderFilteredEpisodes = function () {
-            var eps = allEpisodes;
-            if (currentSeasonIdx > 0 && seasonNums[currentSeasonIdx - 1]) {
-                var targetSeason = seasonNums[currentSeasonIdx - 1];
-                eps = allEpisodes.filter(function (ep) { return ep.season === targetSeason; });
+        this.getFilteredEpisodes = function () {
+            if (chosenSeason > 0 && seasonNums[chosenSeason - 1]) {
+                var s = seasonNums[chosenSeason - 1];
+                return allEpisodes.filter(function (ep) { return ep.season === s; });
             }
-            this.resetScroll();
-            this.drawEpisodeItems(eps);
-            Lampa.Controller.enable('content');
+            return allEpisodes;
         };
 
-        this.resetScroll = function () {
-            scroll.render().find('.empty').remove();
-            scroll.clear();
-            scroll.reset();
-            last = false;
+        this.renderEpisodes = function () {
+            var _this = this;
+            _this.reset();
+            var eps = _this.getFilteredEpisodes();
+
+            eps.forEach(function (ep) {
+                var realIdx = allEpisodes.indexOf(ep);
+                var item = Lampa.Template.get('uafix_item', {
+                    title: ep.title,
+                    quality: 'S' + formatEp(ep.season) + 'E' + formatEp(ep.episode)
+                });
+                item.on('hover:enter', function () {
+                    _this.playEpisode(ep, realIdx);
+                });
+                _this.append(item);
+            });
+
+            Lampa.Controller.enable('content');
         };
 
         this.loadPage = function () {
@@ -416,11 +443,16 @@
                         return a.episode - b.episode;
                     });
                     allEpisodes = eps;
+
+                    // detect seasons
+                    var seen = {};
+                    eps.forEach(function (ep) { seen[ep.season] = true; });
+                    seasonNums = Object.keys(seen).map(Number).sort(function(a,b){return a-b;});
+
                     _this.activity.loader(false);
                     _this.activity.toggle();
-                    _this.setupSeasonFilter();
-                    _this.drawEpisodeItems(eps);
-                    Lampa.Controller.enable('content');
+                    _this.buildFilter();
+                    _this.renderEpisodes();
                     return;
                 }
 
@@ -435,7 +467,13 @@
                         var sMatch = href.match(/sezon-?(\d+)/i);
                         seasons.push({ title: a.textContent.trim() || ('Сезон ' + (seasons.length+1)), url: href, number: sMatch ? parseInt(sMatch[1]) : seasons.length+1 });
                     });
-                    if (seasons.length) { seasons.sort(function(a,b){return a.number-b.number}); _this.showSeasons(seasons); return; }
+                    if (seasons.length) {
+                        seasons.sort(function(a,b){return a.number-b.number});
+                        _this.activity.loader(false);
+                        _this.activity.toggle();
+                        _this.showSeasons(seasons);
+                        return;
+                    }
 
                     var vodMatch = text.match(/zetvideo\.net\/vod\/(\d+)/);
                     if (vodMatch) { _this.activity.loader(false); _this.playVod(vodMatch[1], object.page_title||'UAFlix'); return; }
@@ -445,47 +483,14 @@
             });
         };
 
-        this.drawEpisodeItems = function (episodes) {
-            var _this = this;
-
-            episodes.forEach(function (ep, idx) {
-                var realIdx = allEpisodes.indexOf(ep);
-                if (realIdx === -1) realIdx = idx;
-
-                var item = $('<div class="selector" style="padding:0.5em 0">' +
-                    '<div class="uafix-item" style="display:flex;align-items:center;padding:0.5em;background:rgba(0,0,0,0.3);border-radius:0.3em">' +
-                    '<div style="position:relative;width:12em;height:7em;flex-shrink:0;border-radius:0.3em;overflow:hidden;background:#111">' +
-                    (ep.poster ? '<img src="' + escapeHtml(ep.poster) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">' : '') +
-                    '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:2em;color:white;text-shadow:0 0 8px black">' + formatEp(ep.episode) + '</div>' +
-                    '</div>' +
-                    '<div style="padding:0 1em;font-size:1.4em;color:white">' + escapeHtml(ep.title) + '</div>' +
-                    '</div></div>');
-
-                item.on('hover:enter', function () {
-                    _this.playEpisode(ep, realIdx);
-                }).on('hover:focus', function (e) {
-                    last = e.target;
-                    scroll.update($(e.target), true);
-                }).on('hover:blur', function () {});
-
-                scroll.append(item);
-            });
-        };
-
         this.showSeasons = function (seasons) {
             var _this = this;
-            _this.activity.loader(false);
-            _this.activity.toggle();
-
             seasons.forEach(function (s) {
-                var el = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="padding:1em;background:rgba(255,255,255,0.06);border-radius:0.3em;font-size:1.3em;color:white">' + escapeHtml(s.title) + '</div></div>');
-                el.on('hover:enter', function () {
+                var item = Lampa.Template.get('uafix_folder', { title: s.title, quality: '' });
+                item.on('hover:enter', function () {
                     Lampa.Activity.push({ url:'', title:s.title, component:'uafix_page', page_url:s.url, page_title:s.title, movie:object.movie });
-                }).on('hover:focus', function (e) {
-                    last = e.target;
-                    scroll.update($(e.target), true);
-                }).on('hover:blur', function () {});
-                scroll.append(el);
+                });
+                _this.append(item);
             });
             Lampa.Controller.enable('content');
         };
@@ -500,37 +505,21 @@
 
                 var playlist = [];
                 allEpisodes.forEach(function (e, i) {
-                    var cell = {
-                        title: e.title,
-                        quality: (i === idx) ? (qualities || {}) : {},
-                        url: ''
-                    };
-
-                    if (i === idx) {
-                        cell.url = streamUrl;
-                    } else {
+                    var cell = { title: e.title, quality: (i === idx) ? (qualities || {}) : {}, url: '' };
+                    if (i === idx) { cell.url = streamUrl; }
+                    else {
                         cell.url = function (call) {
                             resolveEpisodeStream(e.url, function (sUrl, sQ) {
-                                if (sUrl) {
-                                    cell.url = sUrl;
-                                    cell.quality = sQ || {};
-                                } else {
-                                    cell.url = '';
-                                }
+                                if (sUrl) { cell.url = sUrl; cell.quality = sQ || {}; }
+                                else { cell.url = ''; }
                                 call();
                             });
                         };
                     }
-
                     playlist.push(cell);
                 });
 
-                Lampa.Player.play({
-                    title: ep.title || 'UAFlix',
-                    url: streamUrl,
-                    quality: qualities || {}
-                });
-
+                Lampa.Player.play({ title: ep.title || 'UAFlix', url: streamUrl, quality: qualities || {} });
                 Lampa.Player.playlist(playlist);
             });
         };
@@ -547,17 +536,18 @@
         };
 
         this.showEmpty = function () {
-            this.activity.loader(false); this.activity.toggle();
-            scroll.clear(); scroll.reset();
-            last = false;
-            scroll.append($('<div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div>'));
+            this.activity.loader(false);
+            this.activity.toggle();
+            this.reset();
+            var empty = $('<div class="empty"><div style="padding:2em;text-align:center;font-size:1.4em;opacity:0.6">Нічого не знайдено</div></div>');
+            scroll.append(empty);
             Lampa.Controller.enable('content');
         };
 
-        this.render = function () { return files.render(); };
-        this.back = function () { Lampa.Activity.backward(); };
-        this.pause = function () {};
-        this.stop = function () { network.clear(); };
+        this.render  = function () { return files.render(); };
+        this.back    = function () { Lampa.Activity.backward(); };
+        this.pause   = function () {};
+        this.stop    = function () { network.clear(); };
         this.destroy = function () { network.clear(); scroll.destroy(); files.destroy(); };
     }
 
