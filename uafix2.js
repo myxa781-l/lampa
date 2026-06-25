@@ -15,11 +15,13 @@
 
     function proxyUrl(url) {
         if (!url) return url;
+        if (url.indexOf(PROXY) === 0) return url;
         return PROXY + encodeURIComponent(url);
     }
 
     function proxyStream(url) {
         if (!url) return url;
+        if (url.indexOf(PROXY) === 0) return url;
         var player = Lampa.Storage.field('player');
         if (player && player !== 'inner') return url;
         return proxyUrl(url);
@@ -72,7 +74,9 @@
             if (href.indexOf('http') !== 0) href = UAFIX + href;
             var epMatch = href.match(/episode-?(\d+)/i);
             var epNum = epMatch ? parseInt(epMatch[1]) : episodes.length + 1;
-            episodes.push({ title: titleText || ('Серія ' + epNum), url: href, poster: thumb, episode: epNum });
+            var sMatch = href.match(/season-?(\d+)/i);
+            var sNum = sMatch ? parseInt(sMatch[1]) : 1;
+            episodes.push({ title: titleText || ('Серія ' + epNum), url: href, poster: thumb, episode: epNum, season: sNum });
         });
         return episodes;
     }
@@ -323,15 +327,19 @@
 
             loadAllPages(url, 1, [], function (eps) {
                 if (eps.length) {
-                    eps.sort(function (a, b) { return a.episode - b.episode; });
+                    eps.sort(function (a, b) { return a.season !== b.season ? a.season - b.season : a.episode - b.episode; });
                     allEpisodes = eps;
 
-                    // Определяем сезон
-                    var sMatch = (eps[0].url || '').match(/season-?(\d+)/i);
-                    if (sMatch) currentSeason = parseInt(sMatch[1]);
+                    // Определяем все уникальные сезоны
+                    var uniqueSeasons = [];
+                    eps.forEach(function(e) {
+                        if (uniqueSeasons.indexOf(e.season) === -1) uniqueSeasons.push(e.season);
+                    });
+                    uniqueSeasons.sort(function(a,b){ return a - b; });
+                    currentSeason = uniqueSeasons[0] || 1;
 
-                    // TMDB данные (не блокируем отображение)
-                    _this.loadTmdbEpisodes(currentSeason, function () {
+                    // TMDB данные для всех сезонов
+                    _this.loadTmdbAllSeasons(uniqueSeasons, 0, function () {
                         _this.showEpisodes(eps);
                     });
                     return;
@@ -358,16 +366,30 @@
             });
         };
 
+        this.loadTmdbAllSeasons = function (seasons, idx, callback) {
+            var _this = this;
+            if (idx >= seasons.length) { callback(); return; }
+            _this.loadTmdbEpisodes(seasons[idx], function () {
+                _this.loadTmdbAllSeasons(seasons, idx + 1, callback);
+            });
+        };
+
         this.loadTmdbEpisodes = function (season, callback) {
             var movie = object.movie;
             if (movie.id && movie.name) {
                 try {
                     Lampa.Api.sources.tmdb.get('tv/' + movie.id + '/season/' + season, {}, function (data) {
-                        tmdbEpisodes = data.episodes || [];
+                        var eps = data.episodes || [];
+                        eps.forEach(function(e) { e._season = season; });
+                        tmdbEpisodes = tmdbEpisodes.concat(eps);
                         callback();
-                    }, function () { tmdbEpisodes = []; callback(); });
+                    }, function () { callback(); });
                 } catch(e) { callback(); }
             } else { callback(); }
+        };
+
+        this.findTmdbEp = function (season, episode) {
+            return tmdbEpisodes.find(function (e) { return e._season === season && e.episode_number === episode; });
         };
 
         this.showEpisodes = function (episodes) {
@@ -380,7 +402,7 @@
 
             episodes.forEach(function (ep, idx) {
                 // TMDB данные для этой конкретной серии
-                var tmdbEp = tmdbEpisodes.find(function (e) { return e.episode_number === ep.episode; });
+                var tmdbEp = _this.findTmdbEp(ep.season, ep.episode);
                 var runtime = tmdbEp ? tmdbEp.runtime : (movie.runtime || 0);
                 var timeText = runtime ? Lampa.Utils.secondsToTime(runtime * 60, true) : '';
                 var rating = tmdbEp && tmdbEp.vote_average ? parseFloat(tmdbEp.vote_average).toFixed(1) : '';
@@ -393,8 +415,8 @@
                 // Название: всегда из uafix
                 var title = ep.title;
 
-                var hashTimeline = getTimelineHash(movie, currentSeason, ep.episode);
-                var hashViewed = getViewedHash(movie, currentSeason, ep.episode);
+                var hashTimeline = getTimelineHash(movie, ep.season, ep.episode);
+                var hashViewed = getViewedHash(movie, ep.season, ep.episode);
                 var timeline = Lampa.Timeline.view(hashTimeline);
                 var isViewed = viewed.indexOf(hashViewed) !== -1;
 
@@ -467,8 +489,8 @@
                 // Плейлист
                 var playlist = [];
                 allEpisodes.forEach(function (e, i) {
-                    var epHash = getTimelineHash(object.movie, currentSeason, e.episode);
-                    var epViewHash = getViewedHash(object.movie, currentSeason, e.episode);
+                    var epHash = getTimelineHash(object.movie, e.season, e.episode);
+                    var epViewHash = getViewedHash(object.movie, e.season, e.episode);
 
                     var cell = {
                         title: e.title,
