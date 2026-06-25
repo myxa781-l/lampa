@@ -40,31 +40,18 @@
 
     function formatEp(num) { return (num < 10 ? '0' : '') + num; }
 
-    // Получить альтернативные названия для поиска
     function getAlternativeTitles(movie, callback) {
         try {
             var type = movie.name ? 'tv' : 'movie';
-
-            // 1) Пробуем uk-UA
             Lampa.Api.sources.tmdb.get(type + '/' + movie.id, { language: 'uk-UA' }, function (data) {
                 var ukName = movie.name ? data.name : data.title;
                 var ruTitle = movie.title || movie.name || '';
-
-                if (ukName && ukName !== ruTitle) {
-                    callback([ukName]);
-                    return;
-                }
-
-                // 2) alternative_titles
+                if (ukName && ukName !== ruTitle) { callback([ukName]); return; }
                 Lampa.Api.sources.tmdb.get(type + '/' + movie.id + '/alternative_titles', {}, function (d) {
                     var titles = d.titles || d.results || [];
                     var names = [];
-
-                    // UA первым
                     titles.forEach(function (t) { if (t.iso_3166_1 === 'UA' && t.title) names.push(t.title); });
-                    // Потом EN
                     titles.forEach(function (t) { if ((t.iso_3166_1 === 'US' || t.iso_3166_1 === 'GB') && t.title && names.indexOf(t.title) === -1) names.push(t.title); });
-
                     callback(names);
                 }, function () { callback([]); });
             }, function () { callback([]); });
@@ -90,17 +77,24 @@
         return episodes;
     }
 
+    // Загрузка всех страниц с дедупликацией
     function loadAllPages(baseUrl, page, accumulated, callback) {
         var url = page === 1 ? baseUrl : (baseUrl.indexOf('?') !== -1 ? baseUrl + '&page=' + page : baseUrl + '?page=' + page);
         getRequest(url, function (text) {
             var doc = parseHTML(text);
             var eps = parseEpisodesFromDoc(doc);
-            if (eps.length === 0) { callback(accumulated); }
-            else {
-                var all = accumulated.concat(eps);
-                if (page < 20) loadAllPages(baseUrl, page + 1, all, callback);
-                else callback(all);
-            }
+            if (eps.length === 0) { callback(accumulated); return; }
+
+            // Дедупликация по URL
+            var existingUrls = {};
+            accumulated.forEach(function(e) { existingUrls[e.url] = true; });
+            var newEps = eps.filter(function(e) { return !existingUrls[e.url]; });
+
+            if (newEps.length === 0) { callback(accumulated); return; }
+
+            var all = accumulated.concat(newEps);
+            if (page < 20) loadAllPages(baseUrl, page + 1, all, callback);
+            else callback(all);
         }, function () { callback(accumulated); });
     }
 
@@ -143,15 +137,14 @@
         }, function () { callback(proxyStream(masterUrl), {auto: proxyStream(masterUrl)}); });
     }
 
-    // Timeline hash (как в Bandera)
     function getTimelineHash(movie, season, episode) {
         var title = movie.original_title || movie.original_name || movie.name || movie.title || '';
         return Lampa.Utils.hash(season ? [season, episode, title].join('') : title);
     }
 
-    function getViewedHash(movie, season, episode, voice) {
+    function getViewedHash(movie, season, episode) {
         var title = movie.original_title || movie.original_name || movie.name || movie.title || '';
-        return Lampa.Utils.hash(season ? [season, episode, title, voice || ''].join('') : title + (voice || ''));
+        return Lampa.Utils.hash(season ? [season, episode, title, 'UAFlix'].join('') : title + 'UAFlix');
     }
 
     // ============ SEARCH COMPONENT ============
@@ -169,25 +162,18 @@
             var _this = this;
             if (Lampa.Activity.active().activity !== this.activity) return;
             Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
-
             if (!initialized) {
                 initialized = true;
                 filter.onBack = function () { _this.start(); };
-                filter.onSearch = function (value) {
-                    Lampa.Activity.replace({ search: value, clarification: true });
-                };
+                filter.onSearch = function (value) { Lampa.Activity.replace({ search: value, clarification: true }); };
                 files.appendHead(filter.render());
                 files.appendFiles(scroll.render());
                 scroll.minus(files.render().find('.explorer__files-head'));
                 scroll.body().addClass('torrent-list');
                 _this.doSearch();
             }
-
             Lampa.Controller.add('content', {
-                toggle: function () {
-                    Lampa.Controller.collectionSet(scroll.render(), files.render());
-                    Lampa.Controller.collectionFocus(last || false, scroll.render());
-                },
+                toggle: function () { Lampa.Controller.collectionSet(scroll.render(), files.render()); Lampa.Controller.collectionFocus(last || false, scroll.render()); },
                 up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
                 down: function () { Navigator.move('down'); },
                 right: function () { if (Navigator.canmove('right')) Navigator.move('right'); else filter.show('Фільтр', 'filter'); },
@@ -198,14 +184,12 @@
         };
 
         this.doSearch = function () {
-            var _this = this;
-            var movie = object.movie;
+            var _this = this, movie = object.movie;
             var title = movie.title || movie.name || '';
             var origTitle = movie.original_title || movie.original_name || '';
             var query = object.search || title;
             if (!query) { _this.showEmpty(); return; }
             _this.activity.loader(true);
-
             _this.searchQuery(query, function (r1) {
                 if (r1.length) { _this.done(r1); return; }
                 if (origTitle && origTitle !== query) {
@@ -219,18 +203,12 @@
 
         this.tryAlternatives = function (movie) {
             var _this = this;
-            getAlternativeTitles(movie, function (titles) {
-                _this.tryNextTitle(titles, 0);
-            });
+            getAlternativeTitles(movie, function (titles) { _this.tryNextTitle(titles, 0); });
         };
 
         this.tryNextTitle = function (titles, idx) {
             var _this = this;
-            if (idx >= titles.length) {
-                // Последний fallback: ключевое слово
-                _this.tryKeyword();
-                return;
-            }
+            if (idx >= titles.length) { _this.tryKeyword(); return; }
             _this.searchQuery(titles[idx], function (r) {
                 if (r.length) { _this.done(r); return; }
                 _this.tryNextTitle(titles, idx + 1);
@@ -252,8 +230,7 @@
         };
 
         this.done = function (results) {
-            this.activity.loader(false);
-            this.activity.toggle();
+            this.activity.loader(false); this.activity.toggle();
             this.drawResults(results);
         };
 
@@ -312,6 +289,7 @@
         var last = false, initialized = false;
         var allEpisodes = [];
         var tmdbEpisodes = [];
+        var currentSeason = 1;
 
         this.create = function () { return this.render(); };
 
@@ -319,7 +297,6 @@
             var _this = this;
             if (Lampa.Activity.active().activity !== this.activity) return;
             Lampa.Background.immediately(Lampa.Utils.cardImgBackgroundBlur(object.movie));
-
             if (!initialized) {
                 initialized = true;
                 files.appendFiles(scroll.render());
@@ -327,12 +304,8 @@
                 scroll.body().addClass('torrent-list');
                 _this.loadPage();
             }
-
             Lampa.Controller.add('content', {
-                toggle: function () {
-                    Lampa.Controller.collectionSet(scroll.render(), files.render());
-                    Lampa.Controller.collectionFocus(last || false, scroll.render());
-                },
+                toggle: function () { Lampa.Controller.collectionSet(scroll.render(), files.render()); Lampa.Controller.collectionFocus(last || false, scroll.render()); },
                 up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
                 down: function () { Navigator.move('down'); },
                 right: function () { Navigator.move('right'); },
@@ -353,13 +326,13 @@
                     eps.sort(function (a, b) { return a.episode - b.episode; });
                     allEpisodes = eps;
 
-                    // Загружаем TMDB данные для длительности
-                    var season = 1;
+                    // Определяем сезон
                     var sMatch = (eps[0].url || '').match(/season-?(\d+)/i);
-                    if (sMatch) season = parseInt(sMatch[1]);
+                    if (sMatch) currentSeason = parseInt(sMatch[1]);
 
-                    _this.loadTmdbEpisodes(season, function () {
-                        _this.showEpisodes(eps, season);
+                    // TMDB данные (не блокируем отображение)
+                    _this.loadTmdbEpisodes(currentSeason, function () {
+                        _this.showEpisodes(eps);
                     });
                     return;
                 }
@@ -385,79 +358,73 @@
             });
         };
 
-        // Загрузка данных TMDB (длительность, рейтинг)
         this.loadTmdbEpisodes = function (season, callback) {
             var movie = object.movie;
-            var id = movie.id;
-            if (id && movie.name) {
+            if (movie.id && movie.name) {
                 try {
-                    Lampa.Api.sources.tmdb.get('tv/' + id + '/season/' + season, {}, function (data) {
+                    Lampa.Api.sources.tmdb.get('tv/' + movie.id + '/season/' + season, {}, function (data) {
                         tmdbEpisodes = data.episodes || [];
                         callback();
-                    }, function () { callback(); });
+                    }, function () { tmdbEpisodes = []; callback(); });
                 } catch(e) { callback(); }
             } else { callback(); }
         };
 
-        this.showEpisodes = function (episodes, season) {
+        this.showEpisodes = function (episodes) {
             var _this = this;
             _this.activity.loader(false);
             _this.activity.toggle();
 
             var viewed = Lampa.Storage.cache('online_view', 5000, []);
             var movie = object.movie;
-            var isSerial = movie.name ? true : false;
 
             episodes.forEach(function (ep, idx) {
-                var tmdbEp = tmdbEpisodes.find(function (e) { return e.episode_number == ep.episode; });
+                // TMDB данные для этой конкретной серии
+                var tmdbEp = tmdbEpisodes.find(function (e) { return e.episode_number === ep.episode; });
                 var runtime = tmdbEp ? tmdbEp.runtime : (movie.runtime || 0);
                 var timeText = runtime ? Lampa.Utils.secondsToTime(runtime * 60, true) : '';
-
-                var hashTimeline = getTimelineHash(movie, season, ep.episode);
-                var hashViewed = getViewedHash(movie, season, ep.episode, 'UAFlix');
-
-                var timeline = Lampa.Timeline.view(hashTimeline);
-
-                var title = tmdbEp ? tmdbEp.name : ep.title;
                 var rating = tmdbEp && tmdbEp.vote_average ? parseFloat(tmdbEp.vote_average).toFixed(1) : '';
-                var stillPath = tmdbEp ? tmdbEp.still_path : '';
-                var poster = stillPath ? Lampa.TMDB.image('t/p/w300' + stillPath) : ep.poster;
+                var airDate = tmdbEp && tmdbEp.air_date ? Lampa.Utils.parseTime(tmdbEp.air_date).full : '';
+                var stillPath = tmdbEp && tmdbEp.still_path ? Lampa.TMDB.image('t/p/w300' + tmdbEp.still_path) : '';
+
+                // Постер: TMDB кадр или uafix превью
+                var poster = stillPath || ep.poster;
+
+                // Название: всегда из uafix
+                var title = ep.title;
+
+                var hashTimeline = getTimelineHash(movie, currentSeason, ep.episode);
+                var hashViewed = getViewedHash(movie, currentSeason, ep.episode);
+                var timeline = Lampa.Timeline.view(hashTimeline);
+                var isViewed = viewed.indexOf(hashViewed) !== -1;
 
                 // Инфо строка
                 var info = [];
-                if (rating) info.push('<span>★ ' + rating + '</span>');
-                if (tmdbEp && tmdbEp.air_date) info.push('<span>' + Lampa.Utils.parseTime(tmdbEp.air_date).full + '</span>');
-                var infoHtml = info.join('<span style="margin:0 0.5em;opacity:0.5">●</span>');
-
-                var isViewed = viewed.indexOf(hashViewed) !== -1;
+                if (rating) info.push('★ ' + rating);
+                if (airDate) info.push(airDate);
+                var infoHtml = info.length ? '<div style="display:flex;gap:1em;opacity:0.6;font-size:0.9em;margin-top:0.3em">' + info.map(function(i){return '<span>'+i+'</span>';}).join('') + '</div>' : '';
 
                 var html = $('<div class="selector" style="padding:0.5em 0">' +
-                    '<div style="display:flex;background:rgba(0,0,0,0.3);border-radius:0.3em;position:relative">' +
-                    // Постер
+                    '<div style="display:flex;background:rgba(0,0,0,0.3);border-radius:0.3em">' +
                     '<div style="position:relative;width:13em;min-height:8em;flex-shrink:0;border-radius:0.3em;overflow:hidden;background:#111">' +
                     (poster ? '<img src="' + escapeHtml(poster) + '" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">' : '') +
                     '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:2em;color:white;text-shadow:0 0 8px black">' + formatEp(ep.episode) + '</div>' +
-                    (isViewed ? '<div style="position:absolute;top:0.5em;left:0.5em;background:rgba(0,0,0,0.5);border-radius:50%;padding:0.2em"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>' : '') +
+                    (isViewed ? '<div style="position:absolute;top:0.5em;left:0.5em;background:rgba(0,0,0,0.5);border-radius:50%;padding:0.2em"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>' : '') +
                     '</div>' +
-                    // Body
-                    '<div style="padding:1em;flex-grow:1">' +
+                    '<div style="padding:1em;flex-grow:1;overflow:hidden">' +
                     '<div style="display:flex;justify-content:space-between;align-items:center">' +
-                    '<div style="font-size:1.4em;color:white;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex-grow:1">' + escapeHtml(title) + '</div>' +
-                    (timeText ? '<div style="padding-left:1em;opacity:0.6;white-space:nowrap">' + timeText + '</div>' : '') +
+                    '<div style="font-size:1.4em;color:white;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(title) + '</div>' +
+                    (timeText ? '<div style="padding-left:1em;opacity:0.6;white-space:nowrap;font-size:0.9em">' + timeText + '</div>' : '') +
                     '</div>' +
-                    // Timeline
-                    '<div class="uafix-timeline" style="margin:0.6em 0"></div>' +
-                    // Info
-                    (infoHtml ? '<div style="display:flex;align-items:center;opacity:0.6;font-size:0.9em">' + infoHtml + '</div>' : '') +
-                    '</div>' +
-                    '</div></div>');
+                    '<div class="uafix-tl" style="margin:0.5em 0"></div>' +
+                    infoHtml +
+                    '</div></div></div>');
 
-                // Рендер timeline
-                html.find('.uafix-timeline').append(Lampa.Timeline.render(timeline));
+                html.find('.uafix-tl').append(Lampa.Timeline.render(timeline));
 
                 html.on('hover:enter', function () {
                     if (movie.id) Lampa.Favorite.add('history', movie, 100);
-                    _this.playEpisode(ep, idx, season, hashViewed, hashTimeline);
+                    _this.playEpisode(ep, idx, hashViewed, hashTimeline);
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
@@ -471,9 +438,7 @@
 
         this.showSeasons = function (seasons) {
             var _this = this;
-            _this.activity.loader(false);
-            _this.activity.toggle();
-
+            _this.activity.loader(false); _this.activity.toggle();
             seasons.forEach(function (s) {
                 var el = $('<div class="selector" style="padding:0.5em 0"><div style="padding:1em;background:rgba(255,255,255,0.06);border-radius:0.3em;font-size:1.3em;color:white">' + escapeHtml(s.title) + '</div></div>');
                 el.on('hover:enter', function () {
@@ -484,7 +449,7 @@
             Lampa.Controller.enable('content');
         };
 
-        this.playEpisode = function (ep, idx, season, hashViewed, hashTimeline) {
+        this.playEpisode = function (ep, idx, hashViewed, hashTimeline) {
             var _this = this;
             _this.activity.loader(true);
 
@@ -499,21 +464,21 @@
                     Lampa.Storage.set('online_view', viewed);
                 }
 
+                // Плейлист
                 var playlist = [];
                 allEpisodes.forEach(function (e, i) {
-                    var epSeason = season;
-                    var epHashTimeline = getTimelineHash(object.movie, epSeason, e.episode);
-                    var epHashViewed = getViewedHash(object.movie, epSeason, e.episode, 'UAFlix');
+                    var epHash = getTimelineHash(object.movie, currentSeason, e.episode);
+                    var epViewHash = getViewedHash(object.movie, currentSeason, e.episode);
 
                     var cell = {
                         title: e.title,
                         quality: (i === idx) ? (qualities || {}) : {},
                         url: '',
-                        timeline: Lampa.Timeline.view(epHashTimeline),
+                        timeline: Lampa.Timeline.view(epHash),
                         mark: function () {
                             var v = Lampa.Storage.cache('online_view', 5000, []);
-                            if (v.indexOf(epHashViewed) === -1) {
-                                v.push(epHashViewed);
+                            if (v.indexOf(epViewHash) === -1) {
+                                v.push(epViewHash);
                                 Lampa.Storage.set('online_view', v);
                             }
                         }
@@ -586,15 +551,10 @@
         if (e.type == 'complite') {
             var render = e.object.activity.render();
             if (!render || render.find('.view--uafix').length) return;
-
-            var btn = $('<div class="full-start__button selector view--uafix">' +
-                '<svg viewBox="0 0 24 24" fill="none" width="22" height="22"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>' +
-                '<span>UAFlix</span></div>');
-
+            var btn = $('<div class="full-start__button selector view--uafix"><svg viewBox="0 0 24 24" fill="none" width="22" height="22"><path d="M8 5v14l11-7z" fill="currentColor"/></svg><span>UAFlix</span></div>');
             btn.on('hover:enter', function () {
                 Lampa.Activity.push({ url:'', title:'UAFlix', component:PLUGIN_NAME, search:e.data.movie.title||e.data.movie.name, movie:e.data.movie, page:1 });
             });
-
             render.find('.view--torrent').after(btn);
         }
     });
