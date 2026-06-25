@@ -114,29 +114,30 @@
             } else { callback(null, null); }
         }, function () { callback(null, null); });
     }
-
-    function getMasterQualities(masterUrl, callback) {
-        getRequest(masterUrl, function (text) {
-            var qualities = {}, lines = text.split('\n');
-            for (var i = 0; i < lines.length; i++) {
-                var line = lines[i].trim();
-                if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
-                    var res = line.match(/RESOLUTION=\d+x(\d+)/);
-                    var label = res ? res[1] + 'p' : 'auto';
-                    if (i + 1 < lines.length) {
-                        var next = lines[i + 1].trim();
-                        if (next && next.indexOf('#') !== 0) {
-                            qualities[label] = next;
-                        }
+function getMasterQualities(masterUrl, callback) {
+    var proxied = proxyUrl(masterUrl);
+    fetch(proxied).then(function(r){ return r.text(); }).then(function(text) {
+        var qualities = {}, lines = text.split('\n');
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line.indexOf('#EXT-X-STREAM-INF') === 0) {
+                var res = line.match(/RESOLUTION=\d+x(\d+)/);
+                var label = res ? res[1] + 'p' : 'auto';
+                if (i + 1 < lines.length) {
+                    var next = lines[i + 1].trim();
+                    if (next && next.indexOf('#') !== 0) {
+                        qualities[label] = next;
                     }
                 }
             }
-            if (!Object.keys(qualities).length) qualities['auto'] = proxyUrl(masterUrl);
-            var sorted = Object.keys(qualities).sort(function (a, b) { return (parseInt(b)||0) - (parseInt(a)||0); });
-            var sQ = {}; sorted.forEach(function (k) { sQ[k] = qualities[k]; });
-            callback(sQ[sorted[0]], sQ);
-        }, function () { callback(proxyUrl(masterUrl), {auto: proxyUrl(masterUrl)}); });
-    }
+        }
+        if (!Object.keys(qualities).length) qualities['auto'] = proxied;
+        var sorted = Object.keys(qualities).sort(function(a,b){ return (parseInt(b)||0)-(parseInt(a)||0); });
+        var sQ = {}; sorted.forEach(function(k){ sQ[k] = qualities[k]; });
+        callback(sQ[sorted[0]], sQ);
+    }).catch(function(){ callback(proxied, {auto: proxied}); });
+}
+   
 
     // ============ SEARCH COMPONENT ============
 
