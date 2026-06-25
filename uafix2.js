@@ -9,6 +9,13 @@
     var PROXY = 'https://uafix-proxy.myxa78.workers.dev/?url=';
     var PLUGIN_NAME = 'uafix_online';
 
+    // ============ FOCUS CSS ============
+
+    var style = $('<style>\
+        .online.focus, .torrent-list .selector.focus { background: rgba(255,255,255,0.1); outline: 2px solid rgba(255,255,255,0.8); outline-offset: -2px; border-radius: 0.3em; }\
+    </style>');
+    $('head').append(style);
+
     // ============ TEMPLATES ============
 
     Lampa.Template.add('uafix_item', '<div class="online selector">\
