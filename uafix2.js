@@ -31,11 +31,6 @@
         return t ? String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
     }
 
-    function proxyStream(url) {
-        if (!url) return url;
-        return proxyUrl(url);
-    }
-
     function formatEp(num) { return (num < 10 ? '0' : '') + num; }
 
     function getUkrainianTitle(movie, callback) {
@@ -88,7 +83,6 @@
             if (eps.length === 0) {
                 callback(accumulated);
             } else {
-                // Проверяем дубли между страницами
                 var newEps = eps.filter(function(ep) {
                     return !accumulated.some(function(a) { return a.url === ep.url; });
                 });
@@ -133,16 +127,16 @@
                         var next = lines[i + 1].trim();
                         if (next && next.indexOf('#') !== 0) {
                             if (next.indexOf('http') !== 0) next = masterUrl.replace(/\/[^\/]*$/, '/') + next;
-                            qualities[label] = proxyStream(next);
+                            qualities[label] = proxyUrl(next);
                         }
                     }
                 }
             }
-            if (!Object.keys(qualities).length) qualities['auto'] = proxyStream(masterUrl);
+            if (!Object.keys(qualities).length) qualities['auto'] = proxyUrl(masterUrl);
             var sorted = Object.keys(qualities).sort(function (a, b) { return (parseInt(b)||0) - (parseInt(a)||0); });
             var sQ = {}; sorted.forEach(function (k) { sQ[k] = qualities[k]; });
             callback(sQ[sorted[0]], sQ);
-        }, function () { callback(proxyStream(masterUrl), {auto: proxyStream(masterUrl)}); });
+        }, function () { callback(proxyUrl(masterUrl), {auto: proxyUrl(masterUrl)}); });
     }
 
     // ============ SEARCH COMPONENT ============
@@ -279,9 +273,9 @@
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
-                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.2)');
+                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.2)', 'outline': '2px solid rgba(255,255,255,0.8)', 'outline-offset': '-2px' });
                 }).on('hover:blur', function (e) {
-                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.06)');
+                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.06)', 'outline': 'none' });
                 });
 
                 scroll.append(item);
@@ -397,9 +391,9 @@
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
-                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.15)');
+                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.2)', 'outline': '2px solid rgba(255,255,255,0.8)', 'outline-offset': '-2px' });
                 }).on('hover:blur', function (e) {
-                    $(e.target).find('.uafix-item').css('background', 'rgba(0,0,0,0.3)');
+                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(0,0,0,0.3)', 'outline': 'none' });
                 });
 
                 scroll.append(item);
@@ -420,9 +414,9 @@
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
-                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.2)');
+                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.2)', 'outline': '2px solid rgba(255,255,255,0.8)', 'outline-offset': '-2px' });
                 }).on('hover:blur', function (e) {
-                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.06)');
+                    $(e.target).find('.uafix-item').css({ 'background': 'rgba(255,255,255,0.06)', 'outline': 'none' });
                 });
                 scroll.append(el);
             });
