@@ -36,10 +36,28 @@
     function getUkrainianTitle(movie, callback) {
         try {
             var type = movie.name ? 'tv' : 'movie';
-            var url = Lampa.TMDB.api(type + '/' + movie.id + '?language=uk-UA');
-            var net = new Lampa.Reguest();
-            net.silent(url, function (data) {
-                callback(movie.name ? (data.name || '') : (data.title || ''));
+            // Пробуем alternative_titles для поиска украинского названия
+            Lampa.Api.sources.tmdb.get(type + '/' + movie.id + '/alternative_titles', {}, function (data) {
+                var titles = data.titles || data.results || [];
+                var ukTitle = '';
+                for (var i = 0; i < titles.length; i++) {
+                    if (titles[i].iso_3166_1 === 'UA') {
+                        ukTitle = titles[i].title;
+                        break;
+                    }
+                }
+                if (ukTitle) { callback(ukTitle); return; }
+                
+                // Fallback: пробуем uk-UA перевод
+                Lampa.Api.sources.tmdb.get(type + '/' + movie.id, { language: 'uk-UA' }, function (data2) {
+                    var name = movie.name ? data2.name : data2.title;
+                    // Если отличается от русского — используем
+                    var ruTitle = movie.title || movie.name || '';
+                    if (name && name !== ruTitle) { callback(name); return; }
+                    
+                    // Последний fallback: ищем по ключевым словам
+                    callback('');
+                }, function () { callback(''); });
             }, function () { callback(''); });
         } catch(e) { callback(''); }
     }
@@ -197,10 +215,29 @@
                 if (ukTitle) {
                     _this.searchQuery(ukTitle, function (r3) {
                         if (r3.length) { _this.done(r3); return; }
-                        _this.showEmpty();
+                        _this.tryKeywords(movie);
                     });
-                } else { _this.showEmpty(); }
+                } else { _this.tryKeywords(movie); }
             });
+        };
+
+        // Последняя попытка: ищем по ключевым словам
+        this.tryKeywords = function (movie) {
+            var _this = this;
+            var title = movie.title || movie.name || '';
+            // Берём самые длинные слова (вероятно уникальные)
+            var words = title.split(/[\s,.:;!?]+/).filter(function(w) { return w.length > 3; });
+            words.sort(function(a, b) { return b.length - a.length; });
+            var keyword = words[0] || '';
+
+            if (keyword && keyword !== title) {
+                _this.searchQuery(keyword, function (r4) {
+                    if (r4.length) { _this.done(r4); return; }
+                    _this.showEmpty();
+                });
+            } else {
+                _this.showEmpty();
+            }
         };
 
         this.done = function (results) {
@@ -390,16 +427,26 @@
                 allEpisodes.forEach(function (e, i) {
                     var cell = {
                         title: e.title,
-                        url: (i === idx) ? streamUrl : function (call) {
+                        quality: (i === idx) ? (qualities || {}) : {},
+                        url: ''
+                    };
+
+                    if (i === idx) {
+                        cell.url = streamUrl;
+                    } else {
+                        cell.url = function (call) {
                             resolveEpisodeStream(e.url, function (sUrl, sQ) {
-                                cell.url = sUrl || '';
-                                cell.quality = sQ || {};
-                                e.mark && e.mark();
+                                if (sUrl) {
+                                    cell.url = sUrl;
+                                    cell.quality = sQ || {};
+                                } else {
+                                    cell.url = '';
+                                }
                                 call();
                             });
-                        },
-                        quality: (i === idx) ? (qualities || {}) : {}
-                    };
+                        };
+                    }
+
                     playlist.push(cell);
                 });
 
