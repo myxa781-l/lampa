@@ -31,16 +31,16 @@
         return t ? String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
     }
 
-function proxyStream(url) {
-    return url;
-}
+    function proxyStream(url) {
+        if (!url) return url;
+        return proxyUrl(url);
+    }
 
     function formatEp(num) { return (num < 10 ? '0' : '') + num; }
 
     function getUkrainianTitle(movie, callback) {
         try {
             var type = movie.name ? 'tv' : 'movie';
-            // Пробуем alternative_titles для поиска украинского названия
             Lampa.Api.sources.tmdb.get(type + '/' + movie.id + '/alternative_titles', {}, function (data) {
                 var titles = data.titles || data.results || [];
                 var ukTitle = '';
@@ -51,15 +51,10 @@ function proxyStream(url) {
                     }
                 }
                 if (ukTitle) { callback(ukTitle); return; }
-                
-                // Fallback: пробуем uk-UA перевод
                 Lampa.Api.sources.tmdb.get(type + '/' + movie.id, { language: 'uk-UA' }, function (data2) {
                     var name = movie.name ? data2.name : data2.title;
-                    // Если отличается от русского — используем
                     var ruTitle = movie.title || movie.name || '';
                     if (name && name !== ruTitle) { callback(name); return; }
-                    
-                    // Последний fallback: ищем по ключевым словам
                     callback('');
                 }, function () { callback(''); });
             }, function () { callback(''); });
@@ -85,7 +80,6 @@ function proxyStream(url) {
         return episodes;
     }
 
-    // Загрузка всех страниц: page=1, page=2, ...
     function loadAllPages(baseUrl, page, accumulated, callback) {
         var url = page === 1 ? baseUrl : (baseUrl.indexOf('?') !== -1 ? baseUrl + '&page=' + page : baseUrl + '?page=' + page);
         getRequest(url, function (text) {
@@ -94,11 +88,19 @@ function proxyStream(url) {
             if (eps.length === 0) {
                 callback(accumulated);
             } else {
-                var all = accumulated.concat(eps);
-                if (page < 20) { // защита
-                    loadAllPages(baseUrl, page + 1, all, callback);
+                // Проверяем дубли между страницами
+                var newEps = eps.filter(function(ep) {
+                    return !accumulated.some(function(a) { return a.url === ep.url; });
+                });
+                if (newEps.length === 0) {
+                    callback(accumulated);
                 } else {
-                    callback(all);
+                    var all = accumulated.concat(newEps);
+                    if (page < 20) {
+                        loadAllPages(baseUrl, page + 1, all, callback);
+                    } else {
+                        callback(all);
+                    }
                 }
             }
         }, function () { callback(accumulated); });
@@ -200,10 +202,8 @@ function proxyStream(url) {
             if (!query) { _this.showEmpty(); return; }
             _this.activity.loader(true);
 
-            // 1) по текущему названию
             _this.searchQuery(query, function (r1) {
                 if (r1.length) { _this.done(r1); return; }
-                // 2) по оригинальному
                 if (origTitle && origTitle !== query) {
                     _this.searchQuery(origTitle, function (r2) {
                         if (r2.length) { _this.done(r2); return; }
@@ -225,11 +225,9 @@ function proxyStream(url) {
             });
         };
 
-        // Последняя попытка: ищем по ключевым словам
         this.tryKeywords = function (movie) {
             var _this = this;
             var title = movie.title || movie.name || '';
-            // Берём самые длинные слова (вероятно уникальные)
             var words = title.split(/[\s,.:;!?]+/).filter(function(w) { return w.length > 3; });
             words.sort(function(a, b) { return b.length - a.length; });
             var keyword = words[0] || '';
@@ -272,13 +270,19 @@ function proxyStream(url) {
         this.drawResults = function (results) {
             var _this = this;
             results.forEach(function (r) {
-                var item = $('<div class="selector" style="padding:0.5em 0"><div style="display:flex;align-items:center;padding:0.8em 1em;background:rgba(255,255,255,0.06);border-radius:0.3em">' +
+                var item = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="display:flex;align-items:center;padding:0.8em 1em;background:rgba(255,255,255,0.06);border-radius:0.3em;transition:background 0.1s">' +
                     (r.poster ? '<div style="width:4em;height:5.5em;flex-shrink:0;margin-right:1em;border-radius:0.2em;overflow:hidden;background:#111"><img src="' + escapeHtml(r.poster) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'"></div>' : '') +
                     '<div style="font-size:1.3em;color:white">' + escapeHtml(r.title) + '</div></div></div>');
 
                 item.on('hover:enter', function () {
                     Lampa.Activity.push({ url:'', title:'UAFlix', component:'uafix_page', page_url:r.url, page_title:r.title, movie:object.movie });
-                }).on('hover:focus', function (e) { last = e.target; scroll.update($(e.target), true); });
+                }).on('hover:focus', function (e) {
+                    last = e.target;
+                    scroll.update($(e.target), true);
+                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.2)');
+                }).on('hover:blur', function (e) {
+                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.06)');
+                });
 
                 scroll.append(item);
             });
@@ -344,7 +348,6 @@ function proxyStream(url) {
             if (!url) { _this.showEmpty(); return; }
             _this.activity.loader(true);
 
-            // Загружаем все страницы
             loadAllPages(url, 1, [], function (eps) {
                 if (eps.length) {
                     eps.sort(function (a, b) { return a.episode - b.episode; });
@@ -353,7 +356,6 @@ function proxyStream(url) {
                     return;
                 }
 
-                // Сезоны / фильм
                 getRequest(url, function (text) {
                     var doc = parseHTML(text);
                     var seasons = [], seenS = {};
@@ -382,7 +384,7 @@ function proxyStream(url) {
 
             episodes.forEach(function (ep, idx) {
                 var item = $('<div class="selector" style="padding:0.5em 0">' +
-                    '<div style="display:flex;align-items:center;padding:0.5em;background:rgba(0,0,0,0.3);border-radius:0.3em">' +
+                    '<div class="uafix-item" style="display:flex;align-items:center;padding:0.5em;background:rgba(0,0,0,0.3);border-radius:0.3em;transition:background 0.1s">' +
                     '<div style="position:relative;width:12em;height:7em;flex-shrink:0;border-radius:0.3em;overflow:hidden;background:#111">' +
                     (ep.poster ? '<img src="' + escapeHtml(ep.poster) + '" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">' : '') +
                     '<div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:2em;color:white;text-shadow:0 0 8px black">' + formatEp(ep.episode) + '</div>' +
@@ -395,6 +397,9 @@ function proxyStream(url) {
                 }).on('hover:focus', function (e) {
                     last = e.target;
                     scroll.update($(e.target), true);
+                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.15)');
+                }).on('hover:blur', function (e) {
+                    $(e.target).find('.uafix-item').css('background', 'rgba(0,0,0,0.3)');
                 });
 
                 scroll.append(item);
@@ -409,10 +414,16 @@ function proxyStream(url) {
             _this.activity.toggle();
 
             seasons.forEach(function (s) {
-                var el = $('<div class="selector" style="padding:0.5em 0"><div style="padding:1em;background:rgba(255,255,255,0.06);border-radius:0.3em;font-size:1.3em;color:white">' + escapeHtml(s.title) + '</div></div>');
+                var el = $('<div class="selector" style="padding:0.5em 0"><div class="uafix-item" style="padding:1em;background:rgba(255,255,255,0.06);border-radius:0.3em;font-size:1.3em;color:white;transition:background 0.1s">' + escapeHtml(s.title) + '</div></div>');
                 el.on('hover:enter', function () {
                     Lampa.Activity.push({ url:'', title:s.title, component:'uafix_page', page_url:s.url, page_title:s.title, movie:object.movie });
-                }).on('hover:focus', function (e) { last = e.target; scroll.update($(e.target), true); });
+                }).on('hover:focus', function (e) {
+                    last = e.target;
+                    scroll.update($(e.target), true);
+                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.2)');
+                }).on('hover:blur', function (e) {
+                    $(e.target).find('.uafix-item').css('background', 'rgba(255,255,255,0.06)');
+                });
                 scroll.append(el);
             });
             Lampa.Controller.enable('content');
@@ -426,7 +437,6 @@ function proxyStream(url) {
                 _this.activity.loader(false);
                 if (!streamUrl) { Lampa.Noty.show('Потік не знайдено'); return; }
 
-                // Плейлист
                 var playlist = [];
                 allEpisodes.forEach(function (e, i) {
                     var cell = {
