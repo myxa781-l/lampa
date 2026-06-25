@@ -48,14 +48,22 @@
             Lampa.Api.sources.tmdb.get(type + '/' + movie.id, { language: 'uk-UA' }, function (data) {
                 var ukName = movie.name ? data.name : data.title;
                 var ruTitle = movie.title || movie.name || '';
-                if (ukName && ukName !== ruTitle) { callback([ukName]); return; }
+
                 Lampa.Api.sources.tmdb.get(type + '/' + movie.id + '/alternative_titles', {}, function (d) {
                     var titles = d.titles || d.results || [];
                     var names = [];
+                    // UK-UA название первым (если отличается от русского)
+                    if (ukName && ukName !== ruTitle && names.indexOf(ukName) === -1) names.push(ukName);
+                    // UA первым
                     titles.forEach(function (t) { if (t.iso_3166_1 === 'UA' && t.title) names.push(t.title); });
-                    titles.forEach(function (t) { if ((t.iso_3166_1 === 'US' || t.iso_3166_1 === 'GB') && t.title && names.indexOf(t.title) === -1) names.push(t.title); });
+                    // Потом все остальные
+                    titles.forEach(function (t) { if (t.title && names.indexOf(t.title) === -1) names.push(t.title); });
                     callback(names);
-                }, function () { callback([]); });
+                }, function () {
+                    // Если alternative_titles не загрузились, вернём хотя бы uk-UA
+                    if (ukName && ukName !== ruTitle) callback([ukName]);
+                    else callback([]);
+                });
             }, function () { callback([]); });
         } catch(e) { callback([]); }
     }
