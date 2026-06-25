@@ -1,4 +1,4 @@
-[25.06.2026 11:24] Levi Traum: (function () {
+(function () {
     'use strict';
 
     if (window.uafix_plugin_loaded) return;
@@ -46,7 +46,7 @@
             var type = movie.name ? 'tv' : 'movie';
             // Пробуем alternative_titles для поиска украинского названия
             Lampa.Api.sources.tmdb.get(type + '/' + movie.id + '/alternative_titles', {}, function (data) {
-                var titles = data.titles  data.results  [];
+                var titles = data.titles || data.results || [];
                 var ukTitle = '';
                 for (var i = 0; i < titles.length; i++) {
                     if (titles[i].iso_3166_1 === 'UA') {
@@ -60,7 +60,7 @@
                 Lampa.Api.sources.tmdb.get(type + '/' + movie.id, { language: 'uk-UA' }, function (data2) {
                     var name = movie.name ? data2.name : data2.title;
                     // Если отличается от русского — используем
-                    var ruTitle = movie.title  movie.name  '';
+                    var ruTitle = movie.title || movie.name || '';
                     if (name && name !== ruTitle) { callback(name); return; }
                     
                     // Последний fallback: ищем по ключевым словам
@@ -69,21 +69,22 @@
             }, function () { callback(''); });
         } catch(e) { callback(''); }
     }
-[25.06.2026 11:24] Levi Traum: function parseEpisodesFromDoc(doc) {
+
+    function parseEpisodesFromDoc(doc) {
         var episodes = [], seen = {};
         doc.querySelectorAll('#sers-wr .video-item').forEach(function (el) {
             var a = el.querySelector('a'), titleEl = el.querySelector('.vi-title'), img = el.querySelector('img');
             if (!a) return;
-            var href = a.getAttribute('href')  '';
-            if (!href  seen[href]) return;
+            var href = a.getAttribute('href') || '';
+            if (!href || seen[href]) return;
             seen[href] = true;
             var titleText = titleEl ? titleEl.textContent.trim() : '';
-            var thumb = img ? (img.getAttribute('data-src')  img.getAttribute('src')  '') : '';
+            var thumb = img ? (img.getAttribute('data-src') || img.getAttribute('src') || '') : '';
             if (thumb && thumb.indexOf('http') !== 0) thumb = UAFIX + thumb;
             if (href.indexOf('http') !== 0) href = UAFIX + href;
             var epMatch = href.match(/episode-?(\d+)/i);
             var epNum = epMatch ? parseInt(epMatch[1]) : episodes.length + 1;
-            episodes.push({ title: titleText  ('Серія ' + epNum), url: href, poster: thumb, episode: epNum });
+            episodes.push({ title: titleText || ('Серія ' + epNum), url: href, poster: thumb, episode: epNum });
         });
         return episodes;
     }
@@ -151,8 +152,7 @@
     function uafixComponent(object) {
         var network = new Lampa.Reguest();
         var scroll = new Lampa.Scroll({ mask: true, over: true });
-        var f
-[25.06.2026 11:24] Levi Traum: iles = new Lampa.Explorer(object);
+        var files = new Lampa.Explorer(object);
         var filter = new Lampa.Filter(object);
         var last = false, initialized = false;
 
@@ -183,7 +183,7 @@
             Lampa.Controller.add('content', {
                 toggle: function () {
                     Lampa.Controller.collectionSet(scroll.render(), files.render());
-                    Lampa.Controller.collectionFocus(last  false, scroll.render());
+                    Lampa.Controller.collectionFocus(last || false, scroll.render());
                 },
                 up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
                 down: function () { Navigator.move('down'); },
@@ -197,9 +197,9 @@
         this.doSearch = function () {
             var _this = this;
             var movie = object.movie;
-            var title = movie.title  movie.name  '';
-            var origTitle = movie.original_title  movie.original_name  '';
-            var query = object.search  title;
+            var title = movie.title || movie.name || '';
+            var origTitle = movie.original_title || movie.original_name || '';
+            var query = object.search || title;
 
             if (!query) { _this.showEmpty(); return; }
             _this.activity.loader(true);
@@ -232,11 +232,11 @@
         // Последняя попытка: ищем по ключевым словам
         this.tryKeywords = function (movie) {
             var _this = this;
-            var title = movie.title  movie.name  '';
+            var title = movie.title || movie.name || '';
             // Берём самые длинные слова (вероятно уникальные)
             var words = title.split(/[\s,.:;!?]+/).filter(function(w) { return w.length > 3; });
             words.sort(function(a, b) { return b.length - a.length; });
-            var keyword = words[0]  '';
+            var keyword = words[0] || '';
 
             if (keyword && keyword !== title) {
                 _this.searchQuery(keyword, function (r4) {
@@ -247,7 +247,8 @@
                 _this.showEmpty();
             }
         };
-[25.06.2026 11:24] Levi Traum: this.done = function (results) {
+
+        this.done = function (results) {
             this.activity.loader(false);
             this.activity.toggle();
             this.drawResults(results);
@@ -257,11 +258,11 @@
             getRequest(UAFIX + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(query), function (text) {
                 var doc = parseHTML(text), results = [];
                 doc.querySelectorAll('.sres-wrap').forEach(function (el) {
-                    var link = el.getAttribute('href')  '';
+                    var link = el.getAttribute('href') || '';
                     var h2 = el.querySelector('.sres-text h2');
                     var img = el.querySelector('img');
                     var title = h2 ? h2.textContent.trim() : '';
-                    var poster = img ? (img.getAttribute('src')  '') : '';
+                    var poster = img ? (img.getAttribute('src') || '') : '';
                     if (link && title) {
                         if (link.indexOf('http') !== 0) link = UAFIX + link;
                         if (poster && poster.indexOf('http') !== 0) poster = UAFIX + poster;
@@ -326,10 +327,11 @@
 
                 _this.loadPage();
             }
-[25.06.2026 11:24] Levi Traum: Lampa.Controller.add('content', {
+
+            Lampa.Controller.add('content', {
                 toggle: function () {
                     Lampa.Controller.collectionSet(scroll.render(), files.render());
-                    Lampa.Controller.collectionFocus(last  false, scroll.render());
+                    Lampa.Controller.collectionFocus(last || false, scroll.render());
                 },
                 up: function () { if (Navigator.canmove('up')) Navigator.move('up'); else Lampa.Controller.toggle('head'); },
                 down: function () { Navigator.move('down'); },
@@ -360,12 +362,12 @@
                     var doc = parseHTML(text);
                     var seasons = [], seenS = {};
                     doc.querySelectorAll('a[href*="/sezon-"]').forEach(function (a) {
-                        var href = a.getAttribute('href')  '';
-                        if (!href  href === '#'  seenS[href]  href.match(/episode/i)) return;
+                        var href = a.getAttribute('href') || '';
+                        if (!href || href === '#' || seenS[href] || href.match(/episode/i)) return;
                         seenS[href] = true;
                         if (href.indexOf('http') !== 0) href = UAFIX + href;
                         var sMatch = href.match(/sezon-?(\d+)/i);
-                        seasons.push({ title: a.textContent.trim()  ('Сезон ' + (seasons.length+1)), url: href, number: sMatch ? parseInt(sMatch[1]) : seasons.length+1 });
+                        seasons.push({ title: a.textContent.trim() || ('Сезон ' + (seasons.length+1)), url: href, number: sMatch ? parseInt(sMatch[1]) : seasons.length+1 });
                     });
                     if (seasons.length) { seasons.sort(function(a,b){return a.number-b.number}); _this.showSeasons(seasons); return; }
 
@@ -404,7 +406,8 @@
 
             Lampa.Controller.enable('content');
         };
-[25.06.2026 11:24] Levi Traum: this.showSeasons = function (seasons) {
+
+        this.showSeasons = function (seasons) {
             var _this = this;
             _this.activity.loader(false);
             _this.activity.toggle();
@@ -432,7 +435,7 @@
                 allEpisodes.forEach(function (e, i) {
                     var cell = {
                         title: e.title,
-                        quality: (i === idx) ? (qualities  {}) : {},
+                        quality: (i === idx) ? (qualities || {}) : {},
                         url: ''
                     };
 
@@ -443,7 +446,7 @@
                             resolveEpisodeStream(e.url, function (sUrl, sQ) {
                                 if (sUrl) {
                                     cell.url = sUrl;
-                                    cell.quality = sQ  {};
+                                    cell.quality = sQ || {};
                                 } else {
                                     cell.url = '';
                                 }
@@ -456,9 +459,9 @@
                 });
 
                 Lampa.Player.play({
-                    title: ep.title  'UAFlix',
+                    title: ep.title || 'UAFlix',
                     url: streamUrl,
-                    quality: qualities  {}
+                    quality: qualities || {}
                 });
 
                 Lampa.Player.playlist(playlist);
@@ -498,7 +501,8 @@
         if (e.type == 'complite') {
             var render = e.object.activity.render();
             if (!render || render.find('.view--uafix').length) return;
-[25.06.2026 11:24] Levi Traum: var btn = $('<div class="full-start__button selector view--uafix">' +
+
+            var btn = $('<div class="full-start__button selector view--uafix">' +
                 '<svg viewBox="0 0 24 24" fill="none" width="22" height="22"><path d="M8 5v14l11-7z" fill="currentColor"/></svg>' +
                 '<span>UAFlix</span></div>');
 
