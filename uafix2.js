@@ -32,16 +32,14 @@
     </div>');
 
     Lampa.Template.add('uafix_folder', '<div class="online selector">\
-        <div class="online__body">\
-            <div style="position:absolute;left:0;top:-0.3em;width:2.4em;height:2.4em">\
-                <svg style="height:2.4em;width:2.4em" viewBox="0 0 128 112" fill="none" xmlns="http://www.w3.org/2000/svg">\
-                    <rect y="20" width="128" height="92" rx="13" fill="white"/>\
-                    <path d="M29.9963 8H98.0037C96.0446 3.3021 91.4079 0 86 0H42C36.5921 0 31.9555 3.3021 29.9963 8Z" fill="white" fill-opacity="0.23"/>\
-                    <rect x="11" y="8" width="106" height="76" rx="13" fill="white" fill-opacity="0.51"/>\
-                </svg>\
+        <div class="online__body" style="display:flex;align-items:center">\
+            <div style="width:4em;height:5.5em;flex-shrink:0;border-radius:0.2em;overflow:hidden;background:#111">\
+                <img src="{img}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">\
             </div>\
-            <div class="online__title" style="padding-left:2.1em">{title}</div>\
-            <div class="online__quality" style="padding-left:3.4em">{quality}</div>\
+            <div style="padding-left:1em">\
+                <div class="online__title">{title}</div>\
+                <div class="online__quality">{quality}</div>\
+            </div>\
         </div>\
     </div>');
 
@@ -294,7 +292,7 @@
             var _this = this;
             _this.reset();
             results.forEach(function (r) {
-                var item = Lampa.Template.get('uafix_folder', { title: r.title, quality: '' });
+                var item = Lampa.Template.get('uafix_folder', { title: r.title, quality: '', img: r.poster || '' });
                 item.on('hover:enter', function () {
                     Lampa.Activity.push({ url:'', title:'UAFlix', component:'uafix_page', page_url:r.url, page_title:r.title, movie:object.movie });
                 });
@@ -495,7 +493,7 @@
         this.showSeasons = function (seasons) {
             var _this = this;
             seasons.forEach(function (s) {
-                var item = Lampa.Template.get('uafix_folder', { title: s.title, quality: '' });
+                var item = Lampa.Template.get('uafix_folder', { title: s.title, quality: '', img: '' });
                 item.on('hover:enter', function () {
                     Lampa.Activity.push({ url:'', title:s.title, component:'uafix_page', page_url:s.url, page_title:s.title, movie:object.movie });
                 });
@@ -528,6 +526,8 @@
                     playlist.push(cell);
                 });
 
+                if (object.movie.id) Lampa.Favorite.add('history', object.movie, 100);
+
                 Lampa.Player.play({ title: ep.title || 'UAFlix', url: streamUrl, quality: qualities || {} });
                 Lampa.Player.playlist(playlist);
             });
@@ -539,7 +539,7 @@
             getRequest(ZET + '/vod/' + vodId, function (html) {
                 _this.activity.loader(false);
                 var f = html.match(/file:"([^"]+\.m3u8[^"]*)"/);
-                if (f) { getMasterQualities(f[1], function (url, q) { Lampa.Player.play({title:title,url:url,quality:q}); Lampa.Player.playlist([]); }); return; }
+                if (f) { getMasterQualities(f[1], function (url, q) { if (object.movie.id) Lampa.Favorite.add('history', object.movie, 100); Lampa.Player.play({title:title,url:url,quality:q}); Lampa.Player.playlist([]); }); return; }
                 Lampa.Noty.show('Потік не знайдено');
             }, function () { _this.activity.loader(false); Lampa.Noty.show('Помилка'); });
         };
